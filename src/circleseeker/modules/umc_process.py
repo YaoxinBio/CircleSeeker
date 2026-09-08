@@ -884,8 +884,9 @@ class CeccProcessor(BaseEccProcessor):
 
         for query_id, group in df.groupby("query_id"):
             signature = self.generate_cecc_signature(group)
-            if "eSeq" in group.columns:
-                signature += "|sequence:" + str(group.iloc[0]["eSeq"])
+            # Preserve the structural catalogue unit across consensus variants.
+            # Sequence extraction validates each candidate before grouping; the
+            # chosen member retains its own sequence, length and directed path.
             signature_map[query_id] = signature
             segment_counts[query_id] = len(group)
             query_id_to_group[query_id] = group

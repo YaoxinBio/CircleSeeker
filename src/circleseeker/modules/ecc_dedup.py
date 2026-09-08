@@ -1226,20 +1226,10 @@ class EccDedup:
             singleton_mask, ColumnStandard.ECCDNA_ID
         ].astype(str)
 
-        if dtype == "Cecc":
-            for original_cluster, members in full_df.groupby("cluster_id", sort=False):
-                representatives: list[tuple] = []
-                for eid, group in members.groupby(ColumnStandard.ECCDNA_ID, sort=False):
-                    topology = cycle(group)
-                    for index, representative in enumerate(representatives):
-                        if same_cycle(topology, representative, tolerance=10):
-                            break
-                    else:
-                        index = len(representatives)
-                        representatives.append(topology)
-                    if index:
-                        mask = (full_df["cluster_id"] == original_cluster) & (full_df[ColumnStandard.ECCDNA_ID] == eid)
-                        full_df.loc[mask, "cluster_id"] = f"{original_cluster}:topology{index}"
+        # CD-HIT defines sequence clusters. Alternative alignments of their
+        # members (e.g. in repeats) must not create additional molecule calls.
+        # Keep the chosen member's sequence and complete directed structure
+        # together, while aggregating support from every cluster member.
 
         if dtype == "Mecc":
             metric_col = (
