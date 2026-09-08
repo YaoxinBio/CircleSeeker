@@ -33,20 +33,14 @@ An earlier audit had established three more examples. The tests in
   circular sequence, not a claim that FASTA position zero is the first locus.
 * Cecc coordinate signatures preserve directed traversal. Early grouping also
   requires equal canonical sequence. CD-HIT clusters are split when their
-  directed structures disagree. A second coordinate-tolerance merge requires
-  equivalent directed cycles within the original 10 bp coordinate tolerance and
-  compatible whole-circle sequences. Its first draft required exact equality;
-  full raw-input validation exposed duplicate noisy consensus copies with
-  identical directed coordinates but different canonical origins. The corrected
-  gate permits at most 1% whole-circle edits, including insertions/deletions,
-  across rotation and reverse complement. This retains the original CD-HIT
-  99% similarity intent; the added whole-circle edit bound is an explicit new
-  validation criterion, not an assertion that the two similarity formulas are
-  identical. Different directions/orders or substantially different sequences
-  still cannot merge. Unknown sequence/direction cannot establish equivalence.
-  The added dependency is [Edlib](https://pypi.org/project/edlib/) (tested with
-  1.3.9.post1), using bounded infix alignment against a doubled sequence and
-  charging unaligned/extra target span to the edit budget.
+  directed structures disagree. The secondary merge preserves the baseline's
+  structural-coordinate definition: equivalent directed cycles within the
+  original 10 bp tolerance may consolidate differing read consensus sequences.
+  It does not add a new nucleotide-variant threshold. Different directions or
+  orders cannot merge merely because their unordered coordinates match. Each
+  retained representative's own sequence and length remain linked and validated.
+  The audit's experimental exact-equality and 1% sequence gates were not adopted:
+  simulation read labels showed they could split copies of the same truth circle.
 * Overlapping or opposite-strand occurrences within a circle remain distinct.
   Only exact repeated segment records are removed; the old proximity rule could
   remove genuine occurrences.

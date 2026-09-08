@@ -28,7 +28,7 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 from circleseeker.utils.read_support import support_fields
-from circleseeker.utils.circular_structure import cycle, same_cycle, same_circular_sequence, ordered_segments, junction_end, validate_sequences
+from circleseeker.utils.circular_structure import cycle, same_cycle, ordered_segments, junction_end, validate_sequences
 from typing import Any, Optional
 import pandas as pd
 from circleseeker.utils.column_standards import ColumnStandard
@@ -1414,8 +1414,10 @@ class EccDedup:
     ) -> pd.DataFrame:
         """Merge coordinate-jittered representations of the same directed circle.
 
-        Require compatible whole-circle sequence (at most 1% edits) and ordered,
-        oriented segments up to whole-circle rotation/reverse complement.
+        Preserve the baseline structural-coordinate merge policy, while requiring
+        ordered, oriented segments up to whole-circle rotation/reversal.
+        Sequence variants do not define new catalogue units in this pass; each
+        representative sequence and its length are validated before export.
         Unknown sequence or strand does not establish molecule identity.
         """
         if df.empty:
@@ -1543,7 +1545,7 @@ class EccDedup:
                     b = ids[j]
                     if (_segs_match(segs_by_id[a], segs_by_id[b])
                             and same_cycle(directed[a], directed[b], tol)
-                            and same_circular_sequence(sequences[a], sequences[b])):
+                            and bool(sequences[a]) and bool(sequences[b])):
                         _union(a, b)
                         merged_pairs += 1
 
