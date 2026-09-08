@@ -20,7 +20,7 @@ from circleseeker.modules.umc_process import (
     UMCProcessConfig,
     extract_ring_sequence,
 )
-from circleseeker.utils.circular_structure import cycle, same_cycle
+from circleseeker.utils.circular_structure import cycle, same_cycle, same_circular_sequence
 from circleseeker.utils.read_support import support_fields
 
 
@@ -150,6 +150,49 @@ def test_coordinate_merge_keeps_different_sequences():
     b["eSeq"] = "AGCT" * 100
     result = EccDedup().merge_cecc_by_tolerance(pd.concat([a, b], ignore_index=True))
     assert result.eccDNA_id.nunique() == 2
+
+
+@pytest.mark.parametrize("edits,expected", [(0, True), (1, True), (4, True), (5, False)])
+def test_circular_sequence_edit_budget_is_global_and_rotation_invariant(edits, expected):
+    import random
+
+    rng = random.Random(72970)
+    a = "".join(rng.choices("ACGT", k=400))
+    changed = list(a)
+    for position in [17, 88, 169, 250, 339][:edits]:
+        changed[position] = {"A": "C", "C": "G", "G": "T", "T": "A"}[changed[position]]
+    b = "".join(changed)
+    b = b[123:] + b[:123]
+    b = b.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+    assert same_circular_sequence(a, b) is expected
+    assert same_circular_sequence(b, a) is expected
+
+
+def test_circular_sequence_indel_does_not_require_identical_consensus_length():
+    import random
+
+    rng = random.Random(363)
+    a = "".join(rng.choices("ACGT", k=400))
+    b = a[:200] + "T" + a[200:]
+    assert same_circular_sequence(a, b[151:] + b[:151])
+    assert same_circular_sequence(a[:200], a) is False
+    assert same_circular_sequence("N" * 400, "N" * 400) is False
+    assert same_circular_sequence("nan", "nan") is False
+
+
+def test_coordinate_merge_combines_noisy_rotated_copies_but_preserves_support():
+    import random
+
+    rng = random.Random(491)
+    seq = "".join(rng.choices("ACGT", k=400))
+    noisy = seq[:101] + ("A" if seq[101] != "A" else "C") + seq[102:]
+    a = segments()
+    b = segments("C2", "readB", copies=5)
+    a["eSeq"] = seq
+    b["eSeq"] = noisy[213:] + noisy[:213]
+    result = EccDedup().merge_cecc_by_tolerance(pd.concat([a, b], ignore_index=True))
+    assert result.eccDNA_id.nunique() == 1
+    assert set(result.copy_number) == {8}
 
 
 def test_reverse_complement_cycle_is_equivalent_but_single_strand_flip_is_not():

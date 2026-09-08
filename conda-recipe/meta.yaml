@@ -1,13 +1,13 @@
 {% set name = "circleseeker" %}
-{% set version = "1.5.1" %}
+{% set version = "1.5.1+ceccfix.20260908" %}
 
 package:
   name: {{ name|lower }}
   version: {{ version }}
 
 source:
-  url: https://github.com/leoxqy/CircleSeeker/archive/refs/tags/v{{ version }}.tar.gz
-  sha256: 87b0ff52e61f24486f229c15a6986cdd9cd9914d70529505c074b556db22f316
+  # Unreleased repair candidate: build the matching local checkout.
+  path: ..
 
 build:
   noarch: python
@@ -31,6 +31,7 @@ requirements:
     - pandas >=2.0
     - numpy >=1.23
     - biopython >=1.81
+    - python-edlib >=1.3.9
     - pysam >=0.22
     - pyyaml >=6.0
     - networkx >=3.0

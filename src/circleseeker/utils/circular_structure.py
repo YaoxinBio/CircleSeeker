@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+import edlib
 
 ORDER_COLUMNS = ("segment_in_circle", "segment_order", "seg_index", "region_idx")
 
@@ -59,6 +60,42 @@ def same_cycle(a: tuple, b: tuple, tolerance: int = 0) -> bool:
                 and abs(x[2] - y[2]) <= tolerance
                 for x, y in zip(a, rotated)
             ):
+                return True
+    return False
+
+
+def same_circular_sequence(a: str, b: str) -> bool:
+    """Require at most 1% whole-circle edits, allowing rotation and reversal.
+
+    A strict equality gate splits noisy consensus copies when a base error
+    changes their canonical origin. Align one unit against a doubled target;
+    charge unaligned/extra target span too, so a matching subfragment cannot
+    establish whole-molecule identity. This gate is used only after directed
+    coordinate compatibility has independently been established.
+    """
+    if not isinstance(a, str) or not isinstance(b, str) or not a or not b:
+        return False
+    a, b = a.upper(), b.upper()
+    if a == "NAN" or b == "NAN":
+        return False
+    if set(a + b) - set("ACGTN") or not (set(a) & set("ACGT")):
+        return False
+    a, b = sorted((a, b), key=lambda seq: (len(seq), seq))
+    reverse_b = b.translate(str.maketrans("ACGTN", "TGCAN"))[::-1]
+    if len(a) == len(b) and (a in b + b or a in reverse_b + reverse_b):
+        return True
+    if "N" in a or "N" in b:
+        return False
+    budget = max(len(a), len(b)) // 100
+    if abs(len(a) - len(b)) > budget:
+        return False
+    for target in (b, reverse_b):
+        result = edlib.align(a, target + target, mode="HW", task="locations", k=budget)
+        distance = result["editDistance"]
+        if distance < 0:
+            continue
+        for start, end in result["locations"]:
+            if start < len(target) and distance + abs(end - start + 1 - len(target)) <= budget:
                 return True
     return False
 

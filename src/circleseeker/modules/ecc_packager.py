@@ -339,7 +339,8 @@ def run(args: argparse.Namespace) -> int:
             if fasta_path:
                 for old_id, seq in load_fasta(fasta_path).items():
                     new_id = id_map.get(old_id, old_id)
-                    sequences[new_id] = seq
+                    if new_id in valid_ids:
+                        sequences[new_id] = seq
 
     validate_confirmed_cecc_sequences(sequences, summary_df)
 

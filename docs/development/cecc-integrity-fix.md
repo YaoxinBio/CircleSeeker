@@ -6,9 +6,10 @@ repair branch, not the planned 1.0.0 release or a replacement for the archived
 historical analysis.
 
 Its internal version is `1.5.1+ceccfix.20260908`, so new logs identify the patch
-instead of reporting an unmodified historical `1.5.1`. The archived public
-Conda recipe and release tag remain historical; this branch is evaluated from
-its own Git commit and Python source before any release work.
+instead of reporting an unmodified historical `1.5.1`. The repair branch's
+Conda recipe builds the local checkout with this same internal version; the
+historical archive remains accessible at the unchanged `v1.5.1` tag. This branch
+is evaluated from its own Git commit and Python source before any release work.
 
 The 2026-09-08 audit replayed 59 supporting raw reads for 52 flagged Cecc
 records. All 52 reproduced the historical wrong sequence and coordinates while
@@ -33,9 +34,19 @@ An earlier audit had established three more examples. The tests in
 * Cecc coordinate signatures preserve directed traversal. Early grouping also
   requires equal canonical sequence. CD-HIT clusters are split when their
   directed structures disagree. A second coordinate-tolerance merge requires
-  equal canonical sequence plus equivalent directed cycles within the original
-  10 bp coordinate tolerance. Unknown sequence/direction cannot establish an
-  equivalent circle. This conservative change can alter final counts.
+  equivalent directed cycles within the original 10 bp coordinate tolerance and
+  compatible whole-circle sequences. Its first draft required exact equality;
+  full raw-input validation exposed duplicate noisy consensus copies with
+  identical directed coordinates but different canonical origins. The corrected
+  gate permits at most 1% whole-circle edits, including insertions/deletions,
+  across rotation and reverse complement. This retains the original CD-HIT
+  99% similarity intent; the added whole-circle edit bound is an explicit new
+  validation criterion, not an assertion that the two similarity formulas are
+  identical. Different directions/orders or substantially different sequences
+  still cannot merge. Unknown sequence/direction cannot establish equivalence.
+  The added dependency is [Edlib](https://pypi.org/project/edlib/) (tested with
+  1.3.9.post1), using bounded infix alignment against a doubled sequence and
+  charging unaligned/extra target span to the edit budget.
 * Overlapping or opposite-strand occurrences within a circle remain distinct.
   Only exact repeated segment records are removed; the old proximity rule could
   remove genuine occurrences.
@@ -62,6 +73,8 @@ An earlier audit had established three more examples. The tests in
   The pipeline packager checks this before emitting final tables or BED files;
   its errors propagate as a failed step instead of publishing a fallback output.
   Duplicate normalized FASTA IDs are rejected rather than silently overwritten.
+* Final FASTA excludes inferred candidates removed by unification; retained
+  sequence IDs follow the same final catalogue as the tables and BED files.
 
 ## Validation and use
 

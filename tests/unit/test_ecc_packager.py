@@ -23,6 +23,35 @@ spec.loader.exec_module(ecc_packager)
 class TestEccPackager:
     """Test cases for ecc_packager module."""
 
+    def test_final_fasta_excludes_inferred_calls_removed_by_unification(self, tmp_path):
+        from types import SimpleNamespace
+
+        source = tmp_path / "source"
+        source.mkdir()
+        unified = source / "unified.csv"
+        unified.write_text(
+            "eccDNA_id,eccDNA_type,State,Length,original_id\n"
+            "UeccDNA1,UeccDNA,Inferred,4,IUeccDNA2\n"
+        )
+        (source / "sample_simple.csv").write_text(
+            "eccDNA_id,chr,start0,end0,strand,length\n"
+            "IUeccDNA1,chr1,100,104,+,4\n"
+            "IUeccDNA2,chr1,200,204,+,4\n"
+        )
+        (source / "sample_UeccDNA_I.fasta").write_text(
+            ">IUeccDNA1\nAAAA\n>IUeccDNA2\nACGT\n"
+        )
+        output = tmp_path / "output"
+        args = SimpleNamespace(
+            sample_name="sample", out_dir=str(output), unified_csv=str(unified),
+            uecc_dir=None, mecc_dir=None, cecc_dir=None, inferred_dir=str(source),
+            html=None, text=None, id_width=4, overwrite=False, dry_run=False, verbose=False,
+        )
+        assert ecc_packager.run(args) == 0
+        all_sequences = ecc_packager.load_fasta(output / "sample_eccDNA_all.fasta")
+        assert all_sequences == {"UeccDNA1": "ACGT"}
+        assert ecc_packager.load_fasta(output / "UeccDNA/sample_uecc.fasta") == all_sequences
+
     @pytest.mark.parametrize("sequence", [None, "ACGT", "ACGT" * 100])
     def test_cecc_sequence_is_checked_before_tables_are_written(self, tmp_path, sequence):
         from types import SimpleNamespace
