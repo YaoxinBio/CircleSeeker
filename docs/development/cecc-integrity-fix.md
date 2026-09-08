@@ -74,6 +74,22 @@ An earlier audit had established three more examples. The tests in
   Duplicate normalized FASTA IDs are rejected rather than silently overwritten.
 * Final FASTA excludes inferred candidates removed by unification; retained
   sequence IDs follow the same final catalogue as the tables and BED files.
+* A selected Cecc segment covering an entire consensus period cannot be combined
+  with additional loci into a nonoverlapping chimeric circle. Repeated locus
+  labels alone do not establish a valid partition of that period. The check
+  covers both repeated-cycle and first-half fallback selection.
+* Inferred simple paths and cycles follow actual retained graph edges. Opposite
+  read traversals reverse segment order and complement both directions. Resolve
+  per-edge directions consistently, including the closing edge for cycles; do
+  not infer a multi-segment path from node insertion order or per-node majority.
+  Direction evidence comes only from edges retained by the existing breakpoint
+  depth filter. A supported open path keeps its unobserved closure as inferred
+  (`ctc=False`); two-segment closure needs two distinct junctions. Branched
+  components retain the existing fallback; this is not a general graph assembler.
+* The inferred overview retains explicit segment strands, including single-base
+  segments, with coordinate order for legacy readers. Curation validates strand
+  lists and includes direction when grouping. Reference FASTA extraction reverse
+  complements each negative segment and concatenates in `seg_index` order.
 
 ## Validation and use
 
@@ -98,18 +114,20 @@ Controlled replay of the same 19 completed benchmark scenarios gave:
 | 055110f repair, reproduced control | 153,815 | 1,624 |
 | Remove CD-HIT cluster partition only | 153,811 | 1,283 |
 | Also remove early exact-sequence grouping | 153,809 | 1,276 |
+| Also repair residual cycle evidence and inferred direction | 153,809 | 1,271 |
 
-All 19 frozen controls reproduced the failed repair metrics. After both changes,
-17 scenarios match all historical metrics exactly. The remaining scenarios are
-ara_UMC_5200_rep3_30X_HiFi and human_U_10000_rep2_30X_HiFi, each with one additional
-FP. These are net differences under a fixed evaluator, not a one-to-one attribution
+All 19 frozen controls reproduced the failed repair metrics. The first two
+changes alone matched historical metrics in 17 scenarios, leaving one additional
+FP in each of ara_UMC_5200_rep3_30X_HiFi and human_U_10000_rep2_30X_HiFi. Those two
+cases motivated the further evidence-based repairs described below. These are net differences under a fixed evaluator, not a one-to-one attribution
 of every newly numbered record. The cohort replays saved Cecc intermediates through
 clustering, deduplication, unification and packaging. It reuses U/M and inference
 only after checking that the supporting-read partition is unchanged; it is not
 19 complete raw-read runs.
 
-The corrected candidate passed 1,273 tests (one deselected) with 72.26% coverage,
-exceeding the configured 50% threshold, and mypy passed all 59 source files.
+The first minimal candidate passed 1,273 tests. With the residual repairs and
+retained-edge boundary check, the final candidate passes 1,293 tests (one
+deselected), with 72.49% coverage, and mypy passes all 59 source files.
 Checks ran on `fat2`, explicitly selecting the isolated checkout. Four cluster
 regression cases and the early-grouping case fail against 055110f and pass with
 this repair. AST checks link the tested methods to the controlled ablations.
@@ -133,10 +151,22 @@ lengths, supporting-copy sums, IDs and directed closure checks passed.
 Integrity alone is insufficient for release acceptance. A separate benchmark gate
 checks TP, recall, precision, F1 and FP; replay rejects all 19 failed repair outputs
 and accepts unchanged baseline controls. It was also applied to the raw-input run.
-The original batch remains cancelled and the v1.5.2 draft remains on hold. The
-residual scenarios, a separately observed loss of strand in inferred-output
-conversion, and full cohort acceptance remain open; no claim of complete software
-or scientific-result validation is made.
+The original batch remains cancelled and the v1.5.2 draft remains on hold.
+The residual repair replays actual saved SplitReads intersection/end evidence
+through graph resolution, strand-preserving curation, unification and packaging.
+The Ara case follows Chr5+ -> Chr4+ -> Chr1+, equivalent to the existing Confirmed
+cycle, and now merges correctly without restoring genomic sorting. The human
+case is rejected because one selected alignment already spans its full 3,562 bp
+consensus; the extra 110 bp locus cannot form a nonoverlapping chimeric partition.
+Original v1.5.1 also reports this candidate on the same MAF, so repairing the
+present evidence does not require recovering the missing historical MAF.
+
+The final residual candidate replays 19 scenarios with TP 153,809 and FP 1,271,
+passing the per-type and Overall non-regression gate. All 19 metrics are unchanged
+by the additional retained-edge boundary check; 17 scenarios exactly match the
+historical metrics and two improve specificity. Raw-input validation and replay
+of the affected inference stages are recorded separately. Full-cohort rebuild and scientific-result acceptance remain
+separate; these diagnostics do not replace archived analyses.
 
 Before replacing historical outputs, validate the changed software, replay real
 candidate cases, re-evaluate affected benchmarks, then rebuild the relevant

@@ -15,6 +15,7 @@ from types import ModuleType
 from typing import Any, Optional
 
 import pandas as pd
+from Bio.Seq import Seq
 from circleseeker.utils.logging import get_logger
 
 pysam_module: ModuleType | None
@@ -65,7 +66,8 @@ def curate_ecc_tables(input_tsv: Path | str) -> tuple[pd.DataFrame, pd.DataFrame
     df = pd.read_csv(input_tsv, sep="\t")
     df = df[df["circle_length"] >= 100]
 
-    df_list = [select_best_duplicate(g) for _, g in df.groupby("regions")]
+    group_keys = ["regions", "strands"] if "strands" in df.columns else ["regions"]
+    df_list = [select_best_duplicate(g) for _, g in df.groupby(group_keys, dropna=False)]
     df_dedup = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
 
     simple_circles = []
@@ -80,6 +82,14 @@ def curate_ecc_tables(input_tsv: Path | str) -> tuple[pd.DataFrame, pd.DataFrame
         regions_list = [part.strip() for part in re.split(r"[;,]+", regions_field) if part.strip()]
         if not regions_list:
             continue
+        strands_field = row.get("strands")
+        explicit_strands = None
+        if pd.notna(strands_field):
+            explicit_strands = str(strands_field).split(";")
+            if len(explicit_strands) != len(regions_list) or any(
+                strand not in {"+", "-"} for strand in explicit_strands
+            ):
+                raise ValueError("Inferred segment directions do not match the region list")
 
         if int(row["segment_count"]) == 1:
             region = regions_list[0]
@@ -96,6 +106,9 @@ def curate_ecc_tables(input_tsv: Path | str) -> tuple[pd.DataFrame, pd.DataFrame
             else:
                 strand = "-"
                 final_start, final_end = end_pos, start_pos
+
+            if explicit_strands is not None:
+                strand = explicit_strands[0]
 
             simple_circles.append(
                 {
@@ -132,6 +145,9 @@ def curate_ecc_tables(input_tsv: Path | str) -> tuple[pd.DataFrame, pd.DataFrame
                 else:
                     strand = "-"
                     final_start, final_end = end_pos, start_pos
+
+                if explicit_strands is not None:
+                    strand = explicit_strands[seg_idx - 1]
 
                 junction_role = (
                     "head" if seg_idx == 1 else "tail" if seg_idx == total_segments else "middle"
@@ -216,6 +232,8 @@ def generate_fasta_sequences(
                     try:
                         # Extract sequence (pysam uses 0-based coordinates)
                         sequence = fasta.fetch(chr_name, start, end)
+                        if row.get("strand", "+") == "-":
+                            sequence = str(Seq(sequence).reverse_complement())
                         if sequence:
                             header = (
                                 f">{eccDNA_id}|{chr_name}:{start}-{end}|length={length}|type=simple"
@@ -252,6 +270,8 @@ def generate_fasta_sequences(
                         try:
                             # Extract sequence for this segment
                             sequence = fasta.fetch(chr_name, start, end)
+                            if row.get("strand", "+") == "-":
+                                sequence = str(Seq(sequence).reverse_complement())
                             if sequence:
                                 segments.append(sequence)
                                 total_length += len(sequence)

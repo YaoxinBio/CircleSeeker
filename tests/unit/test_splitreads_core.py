@@ -413,7 +413,8 @@ class TestCheckBreakpointDirection:
         })
         result = check_breakpoint_direction(df)
         assert len(result) == 1
-        assert result[0][2] == "-_-"
+        # The nodes are reversed, so both directions must be complemented.
+        assert result[0] == ("regionB", "regionA", "+_+", True)
 
     def test_minus_plus_pattern(self):
         df = pd.DataFrame({

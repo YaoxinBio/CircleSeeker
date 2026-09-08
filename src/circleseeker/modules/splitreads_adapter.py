@@ -145,8 +145,12 @@ def convert_splitreads_to_overview_format(
                 region_str,
             )
 
-        # Overview format expects semicolon-separated regions without strand info
-        regions_formatted = ";".join(f"{chrom}:{start}-{end}" for chrom, start, end, _ in regions)
+        # Legacy overview readers infer direction from coordinate order. Also
+        # retain explicit strands, which disambiguate single-base segments.
+        regions_formatted = ";".join(
+            f"{chrom}:{start}-{end}" if strand == "+" else f"{chrom}:{end}-{start}"
+            for chrom, start, end, strand in regions
+        )
 
         # Calculate approximate abundance from coverage
         # SplitReads-Core coverage = totalbase / merge_len
@@ -157,6 +161,7 @@ def convert_splitreads_to_overview_format(
         converted_row = {
             "circle_id": row.get("id", f"splitreads_{idx}"),
             "regions": regions_formatted,
+            "strands": ";".join(strand for _, _, _, strand in regions),
             "circle_length": row.get("merge_len", 0),
             "segment_count": len(regions),
             "num_split_reads": row.get("numreads", 0),
