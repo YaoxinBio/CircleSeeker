@@ -1,15 +1,14 @@
 # Cecc integrity fixes after the v1.5.1 audit
 
-This development branch starts at tag `v1.5.1`, commit
-`87ae7f09c11a4795532a7524db1958c0c11a5b2d` (2026-08-16). It is a software
-repair branch, not the planned 1.0.0 release or a replacement for the archived
-historical analysis.
+The 1.5.2 release preparation derives from tag `v1.5.1`, commit
+`87ae7f09c11a4795532a7524db1958c0c11a5b2d` (2026-08-16), and the validated
+repair commit `055110f531a9e08936f8c526da5c71950a6bbcee`.
 
-Its internal version is `1.5.1+ceccfix.20260908`, so new logs identify the patch
-instead of reporting an unmodified historical `1.5.1`. The repair branch's
-Conda recipe builds the local checkout with this same internal version; the
-historical archive remains accessible at the unchanged `v1.5.1` tag. This branch
-is evaluated from its own Git commit and Python source before any release work.
+The dataset rebuild uses the frozen internal version `1.5.1+ceccfix.20260908`.
+The release preparation identifies itself as `1.5.2`; its algorithm source is
+compared to that repair commit, excluding only `__version__.py`. Historical tags
+and results retain their original identities. See [provenance](../../PROVENANCE.md)
+and the [release notes](../releases/v1.5.2.md).
 
 The 2026-09-08 audit replayed 59 supporting raw reads for 52 flagged Cecc
 records. All 52 reproduced the historical wrong sequence and coordinates while
@@ -78,7 +77,7 @@ segments, or omitted closure). Their expectations have been corrected. Other
 fixtures have been corrected to supply genuinely doubled sequences of their
 stated length; invalid inputs are now tested for rejection separately.
 
-The repair candidate passed 1,267 tests (one deselected) with 72.29% coverage,
+The repair candidate passed 1,269 tests (one deselected) with 72.28% coverage,
 exceeding the configured 50% threshold, and mypy passed all 59 source files.
 Checks ran on `fat2`, explicitly selecting this checkout with `PYTHONPATH=src`.
 The CLI reported `1.5.1+ceccfix.20260908`. Regression tests include the actual

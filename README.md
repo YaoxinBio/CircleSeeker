@@ -4,12 +4,16 @@
 
 # CircleSeeker
 
-[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](https://github.com/leoxqy/CircleSeeker)
-[![CI](https://github.com/leoxqy/CircleSeeker/actions/workflows/ci.yml/badge.svg)](https://github.com/leoxqy/CircleSeeker/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-1.5.2-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
+[![CI](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml/badge.svg)](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
 
 Comprehensive detection and characterization of extrachromosomal circular DNA (eccDNA) from PacBio HiFi sequencing data.
+
+> **1.5.2 release preparation:** distribution files and validation are being prepared.
+> The GitHub release remains a draft until the complete dataset rebuild is accepted.
+> See [release notes](docs/releases/v1.5.2.md) for changes and validation scope.
 
 ## eccDNA Classification
 
@@ -26,8 +30,8 @@ CircleSeeker identifies and classifies eccDNA into three categories:
 ### Quick Install (Recommended)
 
 ```bash
-# Clone repository
-git clone https://github.com/leoxqy/CircleSeeker.git
+# After v1.5.2 is published, clone the exact release
+git clone --branch v1.5.2 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
 cd CircleSeeker
 
 # Create and activate environment
@@ -35,11 +39,16 @@ conda env create -f environment.yml
 conda activate circleseeker
 
 # Install CircleSeeker
-pip install -e .
+python -m pip install .
 
 # Verify installation
 circleseeker --version
 ```
+
+Before the final tag is published, use a specific commit from the preparation
+branch for evaluation. The generic Bioconda installation may still select an older
+release; only use `circleseeker=1.5.2` there after the updated recipe is merged
+and its package is available.
 
 ### Manual Installation
 
@@ -63,7 +72,7 @@ conda install -c bioconda -c conda-forge -y \
 
 # 4. Install CircleSeeker
 cd CircleSeeker
-pip install -e .
+python -m pip install .
 ```
 
 > **Note**: CircleSeeker includes SplitReads-Core, a built-in inference module inspired by [CReSIL](https://github.com/Peppermint-Lab/CReSIL) and optimized for HiFi long reads. No external inference tools are required.
@@ -362,11 +371,13 @@ For detailed documentation, see the `docs/` directory:
 
 ## Citation
 
-If you use CircleSeeker in your research, please cite:
+Use the software citation in [CITATION.cff](CITATION.cff), recording the version
+and the exact commit or version DOI used for your analysis. A DOI will be added
+after the release is archived; no DOI has been assigned to this preparation.
 
-> Zhang Y, You M, Zhou C, et al. (2024). MMC-seq reveals a vast spatiotemporal eccDNA landscape from single cells to tissues. *Manuscript submitted*.
-
-CircleSeeker is the computational pipeline developed as part of the MMC-seq methodology for comprehensive eccDNA detection and characterization.
+CircleSeeker is the computational pipeline developed as part of the MMC-seq
+methodology. Historical authors and code provenance are preserved in
+[PROVENANCE.md](PROVENANCE.md).
 
 ## License
 
@@ -374,8 +385,9 @@ CircleSeeker is dual-licensed: GNU GPL v3.0 (see [LICENSE](LICENSE)) or a commer
 
 ## Contact
 
-- Yaoxin Zhang: yxzhang@ncgr.ac.cn
-- Leo Xinqi Yu: leoxqy@hotmail.com
+- Maintainer: Yaoxin Zhang (yxzhang@ncgr.ac.cn), [YaoxinBio](https://github.com/YaoxinBio)
+- Bugs and support: [GitHub issues](https://github.com/YaoxinBio/CircleSeeker/issues)
+- Original authors: Yaoxin Zhang and Leo Xinqi Yu (see [PROVENANCE.md](PROVENANCE.md)).
 
 ## Acknowledgments
 

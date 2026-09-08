@@ -1,12 +1,12 @@
 {% set name = "circleseeker" %}
-{% set version = "1.5.1+ceccfix.20260908" %}
+{% set version = "1.5.2" %}
 
 package:
   name: {{ name|lower }}
   version: {{ version }}
 
 source:
-  # Unreleased repair candidate: build the matching local checkout.
+  # Local build of the matching checkout; see README.md for the Bioconda recipe.
   path: ..
 
 build:
@@ -62,7 +62,7 @@ test:
     - python -m pip check
 
 about:
-  home: https://github.com/leoxqy/CircleSeeker
+  home: https://github.com/YaoxinBio/CircleSeeker
   license: GPL-3.0-only
   license_family: GPL
   license_file: LICENSE
@@ -81,9 +81,9 @@ about:
     - Detailed HTML reports and comprehensive output formats
     - Modular architecture with 16 processing steps
 
-  doc_url: https://github.com/leoxqy/CircleSeeker#readme
-  dev_url: https://github.com/leoxqy/CircleSeeker
+  doc_url: https://github.com/YaoxinBio/CircleSeeker#readme
+  dev_url: https://github.com/YaoxinBio/CircleSeeker
 
 extra:
   recipe-maintainers:
-    - leoxqy
+    - YaoxinBio

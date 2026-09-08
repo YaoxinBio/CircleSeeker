@@ -5,7 +5,23 @@ All notable changes to CircleSeeker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.1.dev1] - Unreleased
+## [1.5.2] - Unreleased
+
+### Fixed
+- Keep repeat-candidate identity, representative sequence, length and RCA support linked.
+- Preserve directed circular segment order through classification and structural deduplication.
+- Export strand-aware Cecc junctions including the last-to-first closure.
+- Measure LAST alignment identity and leave unavailable MAPQ/confidence fields missing.
+- Fail final packaging on inconsistent confirmed Cecc sequences and exclude removed inferred FASTA records.
+
+### Changed
+- Move active maintenance to YaoxinBio/CircleSeeker while preserving original authors and Git history.
+- Align package version, installation environment, citation metadata and release preparation at 1.5.2.
+- Prepare release artifacts as a draft; full dataset acceptance and final archival are still pending.
+
+See [1.5.2 release notes](docs/releases/v1.5.2.md) for output compatibility and validation limits.
+
+## [1.1.1.dev1] - Historical development notes
 
 ### Added
 - **5-phase pipeline display**: Pipeline progress now shows 5 phases (Preprocessing / CtcReads-Caller / SplitReads-Caller / Integration / Packaging) instead of 16 flat steps. Internal 16-step granularity and checkpoint resume are unchanged.

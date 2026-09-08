@@ -1,3 +1,5 @@
+> Historical validation report for the version recorded below. These metrics are not validation results for v1.5.2; see [current release notes](releases/v1.5.2.md).
+
 # CircleSeeker Batch Validation Report
 
 **Test Date**: 2026-01-14 ~ 2026-01-15

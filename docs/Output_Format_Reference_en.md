@@ -138,6 +138,8 @@ Columns: `chrom, chromStart, chromEnd, name, score, strand, length, eccdna_type,
 
 #### `*_CeccJunctions.bedpe`
 
+In 1.5.2, N segments produce N directed junctions, including the last-to-first closure. Endpoints use one-base, zero-based half-open intervals at each segment's strand-aware entry and exit. LAST-derived MAPQ, low-MAPQ and confidence fields are missing because LAST does not provide MAPQ; identity is measured from alignment columns. Per-read RCA support remains distinct from molecule-level totals.
+
 Columns: `chrom1, start1, end1, chrom2, start2, end2, name, score, strand1, strand2`
 
 #### `*_CeccDNA_C.fasta`

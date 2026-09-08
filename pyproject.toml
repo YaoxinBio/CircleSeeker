@@ -63,10 +63,10 @@ circleseeker = "circleseeker.cli:main"
 CircleSeeker = "circleseeker.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/leoxqy/CircleSeeker"
-Documentation = "https://github.com/leoxqy/CircleSeeker#readme"
-Repository = "https://github.com/leoxqy/CircleSeeker.git"
-"Bug Tracker" = "https://github.com/leoxqy/CircleSeeker/issues"
+Homepage = "https://github.com/YaoxinBio/CircleSeeker"
+Documentation = "https://github.com/YaoxinBio/CircleSeeker#readme"
+Repository = "https://github.com/YaoxinBio/CircleSeeker.git"
+"Bug Tracker" = "https://github.com/YaoxinBio/CircleSeeker/issues"
 
 [tool.setuptools.dynamic]
 version = {attr = "circleseeker.__version__.__version__"}
