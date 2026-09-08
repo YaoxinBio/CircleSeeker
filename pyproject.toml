@@ -108,7 +108,9 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.9"
+# Type-check against the CI interpreter and modern dependency stubs.
+# Runtime compatibility with Python 3.9-3.12 is checked by the test matrix.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 check_untyped_defs = true
