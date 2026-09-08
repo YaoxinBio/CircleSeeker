@@ -21,9 +21,21 @@ jobs:
         run: python scripts/check_release_metadata.py
       - name: Build distributions
         run: |
-          python -m pip install --upgrade build twine
+          python -m pip install --upgrade build twine cffconvert
+          cffconvert --validate
           python -m build
           python -m twine check dist/*
+      - name: Verify wheel installation in an isolated environment
+        run: |
+          python -m venv /tmp/circleseeker-release-check
+          /tmp/circleseeker-release-check/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/circleseeker-release-check/bin/python -c "import circleseeker; assert circleseeker.__version__ == '1.5.2'; print(circleseeker.__file__)"
+          /tmp/circleseeker-release-check/bin/circleseeker --version
+          /tmp/circleseeker-release-check/bin/circleseeker --help
+          /tmp/circleseeker-release-check/bin/python -m pip check
+      - name: Assemble provenance and checksums
+        run: |
           python scripts/check_release_metadata.py --output dist/SOURCE_PROVENANCE.json
           python scripts/make_bioconda_recipe.py dist/circleseeker-1.5.2.tar.gz dist/bioconda-meta.yaml
           cp environment.yml CITATION.cff PROVENANCE.md dist/
