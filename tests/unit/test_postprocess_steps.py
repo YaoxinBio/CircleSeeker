@@ -68,6 +68,27 @@ class TestEccUnify:
 class TestEccPackager:
     """Tests for ecc_packager step."""
 
+    @pytest.mark.parametrize("raise_error", [True, False])
+    def test_failed_packaging_cannot_publish_fallback(self, tmp_path, monkeypatch, raise_error):
+        pipeline = Pipeline(Config(output_dir=tmp_path / "out", prefix="sample"))
+        unified = pipeline.config.output_dir / "sample_unified.csv"
+        unified.write_text("eccDNA_id,eccDNA_type,State,Length\n")
+        pipeline.state.results[ResultKeys.UNIFIED_CSV] = str(unified)
+
+        def fail_packaging(*_args, **_kwargs):
+            if raise_error:
+                raise ValueError("Cecc FASTA length disagrees with metadata")
+            return 1
+
+        def forbid_fallback(*_args, **_kwargs):
+            pytest.fail("Invalid packaged output must not be published through a fallback")
+
+        monkeypatch.setattr("circleseeker.modules.ecc_packager.run", fail_packaging)
+        monkeypatch.setattr(pipeline, "_create_basic_output_structure", forbid_fallback)
+        with pytest.raises(PipelineError, match="ecc_packager failed"):
+            ecc_packager(pipeline)
+        assert ResultKeys.FINAL_RESULTS not in pipeline.state.results
+
     def test_creates_output_directory(self, tmp_path, monkeypatch):
         """ecc_packager should create the output directory structure."""
         config = Config(output_dir=tmp_path / "out", prefix="sample")
@@ -308,8 +329,8 @@ class TestEccPackagerWithData:
 
         assert ResultKeys.FINAL_RESULTS in pipeline.state.results
 
-    def test_fallback_on_packager_failure(self, tmp_path, monkeypatch):
-        """ecc_packager falls back to basic output structure on failure."""
+    def test_io_failure_is_not_reported_as_packaging_success(self, tmp_path, monkeypatch):
+        """A failed result export must not obtain a successful FINAL_RESULTS entry."""
         config = Config(output_dir=tmp_path / "out", prefix="sample")
         pipeline = Pipeline(config)
 
@@ -329,5 +350,6 @@ class TestEccPackagerWithData:
             failing_run,
         )
 
-        ecc_packager(pipeline)
-        assert ResultKeys.FINAL_RESULTS in pipeline.state.results
+        with pytest.raises(PipelineError, match="ecc_packager failed"):
+            ecc_packager(pipeline)
+        assert ResultKeys.FINAL_RESULTS not in pipeline.state.results

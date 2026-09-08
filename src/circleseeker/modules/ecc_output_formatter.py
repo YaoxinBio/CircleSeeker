@@ -30,6 +30,7 @@ Output directory structure:
 from __future__ import annotations
 
 from pathlib import Path
+from circleseeker.utils.circular_structure import junction_end, validate_sequences
 from typing import Any, Optional
 
 import pandas as pd
@@ -447,11 +448,11 @@ def generate_reads_table(
             # Use per-read value if available, otherwise fall back to eccDNA-level
             if i < len(per_read_cns) and per_read_cns[i].strip():
                 try:
-                    read_cn = int(float(per_read_cns[i].strip()))
+                    read_cn = float(per_read_cns[i].strip())
                 except (ValueError, TypeError):
-                    read_cn = eccDNA_cn
+                    read_cn = eccDNA_cn if len(read_names) == 1 else float("nan")
             else:
-                read_cn = eccDNA_cn
+                read_cn = eccDNA_cn if len(read_names) == 1 else float("nan")
 
             rows.append({
                 "eccDNA_id": ecc_id,
@@ -573,18 +574,20 @@ def generate_cecc_bedpe(regions_df: pd.DataFrame, output_path: Path) -> None:
         group = group.sort_values("region_idx")
         segs = list(group.itertuples())
 
-        # Create junctions between consecutive segments
-        for i in range(len(segs) - 1):
+        # Include the closing junction of the circular traversal.
+        for i in range(len(segs)):
             seg1 = segs[i]
-            seg2 = segs[i + 1]
+            seg2 = segs[(i + 1) % len(segs)]
+            start1, end1 = junction_end(seg1.start, seg1.end, seg1.strand, outgoing=True)
+            start2, end2 = junction_end(seg2.start, seg2.end, seg2.strand, outgoing=False)
 
             bedpe_rows.append({
                 "chr1": seg1.chr,
-                "start1": int(seg1.end) - 1,
-                "end1": int(seg1.end),
+                "start1": start1,
+                "end1": end1,
                 "chr2": seg2.chr,
-                "start2": int(seg2.start),
-                "end2": int(seg2.start) + 1,
+                "start2": start2,
+                "end2": end2,
                 "name": f"{ecc_id}|{seg1.region_idx}->{seg2.region_idx}",
                 "score": 1,
                 "strand1": seg1.strand,
@@ -596,6 +599,16 @@ def generate_cecc_bedpe(regions_df: pd.DataFrame, output_path: Path) -> None:
 
 
 # ================== FASTA File Generation ==================
+
+def validate_confirmed_cecc_sequences(
+    sequences: dict[str, str], summary_df: pd.DataFrame
+) -> None:
+    """Check confirmed Cecc representatives before any final result is written."""
+    confirmed_cecc = summary_df[(summary_df["type"] == "Cecc") & (summary_df["state"] == "Confirmed")].copy()
+    if not confirmed_cecc.empty:
+        confirmed_cecc["eSeq"] = confirmed_cecc["eccDNA_id"].map(sequences)
+        validate_sequences(confirmed_cecc)
+
 
 def generate_fasta_files(
     sequences: dict[str, str],
@@ -618,6 +631,8 @@ def generate_fasta_files(
 
     # Map short type names to full directory names
     _TYPE_TO_DIR = {"Uecc": "UeccDNA", "Mecc": "MeccDNA", "Cecc": "CeccDNA"}
+
+    validate_confirmed_cecc_sequences(sequences, summary_df)
 
     # Create type subdirectories
     for dir_name in _TYPE_TO_DIR.values():
@@ -736,6 +751,46 @@ def format_output(
     # Generate reads table
     reads_df = generate_reads_table(uecc_df, mecc_df, cecc_df)
 
+    # Load and merge FASTA sequences
+    sequences: dict[str, str] = {}
+
+    def load_fasta(fasta_path: Path) -> dict[str, str]:
+        """Load FASTA file into dict."""
+        seqs: dict[str, str] = {}
+        if not fasta_path.exists():
+            return seqs
+
+        current_id: Optional[str] = None
+        current_seq: list[str] = []
+
+        with open(fasta_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(">"):
+                    if current_id:
+                        seqs[current_id] = "".join(current_seq)
+                    current_id = line[1:].split()[0].split("|")[0]
+                    if current_id in seqs:
+                        raise ValueError(f"Duplicate output FASTA ID: {current_id}")
+                    current_seq = []
+                else:
+                    current_seq.append(line)
+
+            if current_id:
+                seqs[current_id] = "".join(current_seq)
+
+        return seqs
+
+    # Load sequences and update IDs
+    for fasta_path in [uecc_fasta, mecc_fasta, cecc_fasta]:
+        if fasta_path and fasta_path.exists():
+            for old_id, seq in load_fasta(fasta_path).items():
+                new_id = id_map.get(old_id, old_id)
+                sequences[new_id] = seq
+
+    # Validate before writing the corresponding tables or BED files.
+    validate_confirmed_cecc_sequences(sequences, summary_df)
+
     # Save CSV files
     summary_df.to_csv(output_dir / "eccDNA_summary.csv", index=False)
     regions_df.to_csv(output_dir / "eccDNA_regions.csv", index=False)
@@ -755,41 +810,6 @@ def format_output(
     generate_mecc_bed(regions_df, output_dir / "MeccDNA" / "mecc_sites.bed")
     generate_cecc_bed(regions_df, output_dir / "CeccDNA" / "cecc_segments.bed")
     generate_cecc_bedpe(regions_df, output_dir / "CeccDNA" / "cecc_junctions.bedpe")
-
-    # Load and merge FASTA sequences
-    sequences: dict[str, str] = {}
-
-    def load_fasta(fasta_path: Path) -> dict[str, str]:
-        """Load FASTA file into dict."""
-        seqs: dict[str, str] = {}
-        if not fasta_path.exists():
-            return seqs
-
-        current_id: Optional[str] = None
-        current_seq: list[str] = []
-
-        with open(fasta_path) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith(">"):
-                    if current_id:
-                        seqs[current_id] = "".join(current_seq)
-                    current_id = line[1:].split()[0]
-                    current_seq = []
-                else:
-                    current_seq.append(line)
-
-            if current_id:
-                seqs[current_id] = "".join(current_seq)
-
-        return seqs
-
-    # Load sequences and update IDs
-    for fasta_path in [uecc_fasta, mecc_fasta, cecc_fasta]:
-        if fasta_path and fasta_path.exists():
-            for old_id, seq in load_fasta(fasta_path).items():
-                new_id = id_map.get(old_id, old_id)
-                sequences[new_id] = seq
 
     # Generate FASTA files
     generate_fasta_files(sequences, output_dir, summary_df)

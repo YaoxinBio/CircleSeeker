@@ -698,8 +698,8 @@ class TestParseLastSplitMaf:
         assert result["read1"][0].query_start == 10
         assert result["read1"][0].query_end == 110
 
-    def test_identity_default_95(self, builder, tmp_path):
-        """Identity defaults to 95.0 since last-split doesn't provide it."""
+    def test_identity_measured_from_alignment(self, builder, tmp_path):
+        """A perfect MAF alignment reports measured identity of 100 percent."""
         maf = tmp_path / "identity.maf"
         self._write_maf(maf, (
             "a score=100\n"
@@ -707,7 +707,7 @@ class TestParseLastSplitMaf:
             "s read1 0 100 + 1000 ACGT\n"
         ))
         result = builder._parse_last_split_maf(maf)
-        assert result["read1"][0].identity == 95.0
+        assert result["read1"][0].identity == 100.0
 
     def test_reverse_strand_boundary_zero_start(self, builder, tmp_path):
         """Reverse strand with start=0: entire sequence aligned from end."""

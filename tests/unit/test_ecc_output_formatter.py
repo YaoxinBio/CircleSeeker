@@ -347,7 +347,7 @@ class TestGenerateCeccBedpe:
         generate_cecc_bedpe(regions, out)
         assert out.exists()
         lines = out.read_text().strip().split("\n")
-        assert len(lines) == 2  # 2 junctions for 3 segments
+        assert len(lines) == 3  # Include the third-to-first closing junction
 
     def test_single_segment(self, tmp_path):
         regions = pd.DataFrame({
@@ -357,9 +357,9 @@ class TestGenerateCeccBedpe:
         })
         out = tmp_path / "cecc.bedpe"
         generate_cecc_bedpe(regions, out)
-        # Single segment -> no junctions, file is created but empty
+        # A one-segment circle still has its closing junction.
         content = out.read_text().strip()
-        assert content == ""
+        assert "C1|1->1" in content
 
 
 class TestGenerateFastaFiles:

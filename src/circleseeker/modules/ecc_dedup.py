@@ -27,6 +27,8 @@ import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
+from circleseeker.utils.read_support import support_fields
+from circleseeker.utils.circular_structure import cycle, same_cycle, ordered_segments, junction_end, validate_sequences
 from typing import Any, Optional
 import pandas as pd
 from circleseeker.utils.column_standards import ColumnStandard
@@ -879,6 +881,10 @@ class EccDedup:
             df["orig_eccdna_id"] = df["orig_eccDNA_id"]
             df = df.drop(columns=["orig_eccDNA_id"])
 
+        for col in ("per_read_copy_number", "candidate_support"):
+            if col in df.columns:
+                df[col] = df[col].astype("string")
+
         return df
 
     def reorder_columns_for_output(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1163,8 +1169,7 @@ class EccDedup:
         if ColumnStandard.MAPQ_BEST in result.columns:
             mapq_best = (
                 pd.to_numeric(result[ColumnStandard.MAPQ_BEST], errors="coerce")
-                .fillna(0)
-                .astype(int)
+                .astype("Float64")
             )
             result[ColumnStandard.LOW_MAPQ] = mapq_best < int(CONF_MAPQ_LOW_THRESHOLD)
 
@@ -1192,6 +1197,16 @@ class EccDedup:
         if not had_copy_num_input and "repeat_number" in result.columns:
             result[ColumnStandard.COPY_NUMBER] = result["repeat_number"]
 
+        for cluster_id, group in df.groupby("cluster_id", sort=False):
+            mask = result["cluster_id"] == cluster_id
+            read_names = str(result.loc[mask, ColumnStandard.READS].iloc[0]) if ColumnStandard.READS in result else ""
+            fields = support_fields(group, read_names)
+            for name, value in fields.items():
+                if name != "copy_number" or pd.notna(value):
+                    result.loc[mask, name] = value
+            if pd.notna(fields["copy_number"]):
+                result.loc[mask, "repeat_number"] = fields["copy_number"]
+
         result = self._finalize_dataframe(result, dtype)
         return result
 
@@ -1210,6 +1225,21 @@ class EccDedup:
         full_df.loc[singleton_mask, "cluster_id"] = "singleton:" + full_df.loc[
             singleton_mask, ColumnStandard.ECCDNA_ID
         ].astype(str)
+
+        if dtype == "Cecc":
+            for original_cluster, members in full_df.groupby("cluster_id", sort=False):
+                representatives: list[tuple] = []
+                for eid, group in members.groupby(ColumnStandard.ECCDNA_ID, sort=False):
+                    topology = cycle(group)
+                    for index, representative in enumerate(representatives):
+                        if same_cycle(topology, representative, tolerance=10):
+                            break
+                    else:
+                        index = len(representatives)
+                        representatives.append(topology)
+                    if index:
+                        mask = (full_df["cluster_id"] == original_cluster) & (full_df[ColumnStandard.ECCDNA_ID] == eid)
+                        full_df.loc[mask, "cluster_id"] = f"{original_cluster}:topology{index}"
 
         if dtype == "Mecc":
             metric_col = (
@@ -1293,10 +1323,7 @@ class EccDedup:
             agg_dict[ColumnStandard.COPY_NUMBER] = unique_by_id.groupby("cluster_id")[
                 ColumnStandard.COPY_NUMBER
             ].apply(lambda s: to_numeric_safe(s, 0).sum())
-        if ColumnStandard.STRAND in full_df.columns:
-            agg_dict[ColumnStandard.STRAND] = full_df.groupby("cluster_id")[
-                ColumnStandard.STRAND
-            ].apply(majority_vote)
+        # Directions belong to individual representative segments/sites.
 
         if agg_dict:
             agg_df = pd.DataFrame(agg_dict)
@@ -1311,8 +1338,7 @@ class EccDedup:
         if ColumnStandard.MAPQ_BEST in result.columns:
             mapq_best = (
                 pd.to_numeric(result[ColumnStandard.MAPQ_BEST], errors="coerce")
-                .fillna(0)
-                .astype(int)
+                .astype("Float64")
             )
             result[ColumnStandard.LOW_MAPQ] = mapq_best < int(CONF_MAPQ_LOW_THRESHOLD)
 
@@ -1332,6 +1358,13 @@ class EccDedup:
             result["cluster_id"].map(merged_ids).fillna(result[ColumnStandard.ECCDNA_ID])
         )
         result["orig_eccdna_id"] = result[ColumnStandard.ECCDNA_ID]
+        for cluster_id, group in full_df.groupby("cluster_id", sort=False):
+            mask = result["cluster_id"] == cluster_id
+            read_names = str(result.loc[mask, ColumnStandard.READS].iloc[0]) if ColumnStandard.READS in result else ""
+            for name, value in support_fields(group, read_names).items():
+                if name != "copy_number" or pd.notna(value):
+                    result.loc[mask, name] = value
+
         result = self._finalize_dataframe(result, dtype)
 
         return result
@@ -1366,126 +1399,24 @@ class EccDedup:
     def dedupe_cecc_segments(
         self, df: pd.DataFrame, position_tolerance: int = 100
     ) -> pd.DataFrame:
-        """Deduplicate CeccDNA segments by genomic position, ignoring strand.
+        """Remove exact duplicate segment records; preserve distinct circle occurrences.
 
-        When multiple reads from the same eccDNA are merged, they may contain
-        duplicate segments at the same genomic position but different strands
-        (e.g., one read from + strand, another from - strand). This function
-        removes such duplicates, keeping one representative segment per position.
-
-        The deduplication ignores strand because:
-        1. The same physical location can be read from either strand
-        2. For CeccDNA detection, the position matters more than the strand
-        3. Different strand reads of the same position represent the same segment
-
-        Args:
-            df: DataFrame with CeccDNA segments (must have eccDNA_id, chr, start0, end0)
-            position_tolerance: Maximum distance (bp) to consider same position (default 100)
-
-        Returns:
-            DataFrame with deduplicated segments
+        position_tolerance remains accepted for API compatibility. Proximity or
+        overlap cannot establish that two occurrences in a circle are identical.
         """
         if df.empty:
             return df
-
-        # Check required columns
-        required_cols = [ColumnStandard.CHR, ColumnStandard.START0, ColumnStandard.END0]
-        # Use eccDNA_id for grouping
-        if "eccDNA_id" in df.columns:
-            id_col = "eccDNA_id"
-        elif ColumnStandard.ECCDNA_ID in df.columns:
-            id_col = ColumnStandard.ECCDNA_ID
-        else:
-            id_col = "cluster_id"
-        if id_col not in df.columns:
-            self.logger.warning("Cannot dedupe segments: missing id column")
-            return df
-        for col in required_cols:
-            if col not in df.columns:
-                self.logger.warning(f"Cannot dedupe segments: missing {col} column")
-                return df
-
-        df = df.copy()
-
-        # Track rows to keep
-        rows_to_keep = []
-
-        for eccdna_id, group in df.groupby(id_col, sort=False):
-            if len(group) <= 1:
-                rows_to_keep.extend(group.index.tolist())
-                continue
-
-            # Sort by chr, start0 for consistent ordering
-            group = group.sort_values([ColumnStandard.CHR, ColumnStandard.START0])
-
-            # Track seen positions by chromosome for fast lookup
-            seen_by_chr: dict[str, list[tuple[int, int]]] = {}
-            keep_indices: list[int] = []
-
-            for row in group.itertuples(index=True):
-                idx = row.Index
-                chr_val = str(getattr(row, ColumnStandard.CHR))
-                start0 = int(getattr(row, ColumnStandard.START0))
-                end0 = int(getattr(row, ColumnStandard.END0))
-
-                # Check if this position is already covered
-                is_duplicate = False
-                for seen_start, seen_end in seen_by_chr.get(chr_val, ()):
-                    # Check overlap with tolerance
-                    # Two positions are considered the same if they overlap significantly
-                    overlap_start = max(start0, seen_start)
-                    overlap_end = min(end0, seen_end)
-                    overlap_len = max(0, overlap_end - overlap_start)
-
-                    len_a = max(1, end0 - start0)
-                    len_b = max(1, seen_end - seen_start)
-
-                    # If overlap is >50% of either segment, consider it a duplicate
-                    if overlap_len > 0.5 * len_a or overlap_len > 0.5 * len_b:
-                        is_duplicate = True
-                        break
-
-                    # Also check if positions are very close (within tolerance)
-                    if abs(start0 - seen_start) < position_tolerance and abs(end0 - seen_end) < position_tolerance:
-                        is_duplicate = True
-                        break
-
-                if not is_duplicate:
-                    seen_by_chr.setdefault(chr_val, []).append((start0, end0))
-                    keep_indices.append(idx)
-
-            rows_to_keep.extend(keep_indices)
-
-        # Filter to keep only deduplicated rows
-        result = df.loc[rows_to_keep].copy()
-
-        # Log deduplication stats
-        original_count = len(df)
-        final_count = len(result)
-        if original_count > final_count:
-            removed = original_count - final_count
-            self.logger.info(
-                f"Deduplicated CeccDNA segments: removed {removed} duplicate segments "
-                f"({original_count} -> {final_count})"
-            )
-
-        return result
+        keys = [c for c in ("eccDNA_id", "chr", "start0", "end0", "strand", "segment_in_circle", "segment_order", "seg_index", "q_start", "q_end") if c in df.columns]
+        return df.drop_duplicates(subset=keys).copy() if keys else df.copy()
 
     def merge_cecc_by_tolerance(
         self, df: pd.DataFrame, tolerance_bp: int = 10
     ) -> pd.DataFrame:
-        """Merge near-identical CeccDNA entries by coordinate tolerance.
+        """Merge coordinate-jittered representations of the same directed circle.
 
-        CD-HIT clusters by sequence identity, but CeccDNA calls originating from the
-        same circle can differ slightly in reported segment boundaries (e.g. +/- a few bp),
-        leading to duplicated entries that look like false positives in benchmarks.
-
-        This method merges CeccDNA entries when:
-        - they have the same number of segments
-        - after sorting segments by (chr, start0, end0), each corresponding segment
-          matches on chromosome and start/end within `tolerance_bp`.
-
-        Strand is ignored for merging.
+        Require the same canonical circular sequence and compatible ordered,
+        oriented segments up to whole-circle rotation/reverse complement.
+        Unknown sequence or strand does not establish molecule identity.
         """
         if df.empty:
             return df
@@ -1597,6 +1528,9 @@ class EccDedup:
                     return False
             return True
 
+        directed = {str(eid): cycle(group) for eid, group in df.groupby(ColumnStandard.ECCDNA_ID, sort=False)}
+        sequences = {str(eid): str(group.iloc[0].get("eSeq", "")) for eid, group in df.groupby(ColumnStandard.ECCDNA_ID, sort=False)}
+
         merged_pairs = 0
         for _, ids in buckets.items():
             if len(ids) <= 1:
@@ -1607,7 +1541,9 @@ class EccDedup:
                 for j in range(i + 1, len(ids)):
                     a = ids[i]
                     b = ids[j]
-                    if _segs_match(segs_by_id[a], segs_by_id[b]):
+                    if (_segs_match(segs_by_id[a], segs_by_id[b])
+                            and sequences[a] and sequences[a] == sequences[b]
+                            and same_cycle(directed[a], directed[b], tol)):
                         _union(a, b)
                         merged_pairs += 1
 
@@ -1633,19 +1569,10 @@ class EccDedup:
         for root, members in groups.items():
             if len(members) == 1:
                 single = df[df[ColumnStandard.ECCDNA_ID] == members[0]].copy()
-                # For single members, per_read_copy_number = the member's own copy_number
-                if "per_read_copy_number" not in single.columns:
-                    if reads_col and ColumnStandard.COPY_NUMBER in single.columns:
-                        def _build_single_per_read(row: pd.Series) -> str:
-                            cn = row.get(ColumnStandard.COPY_NUMBER, pd.NA)
-                            cn_str = str(int(cn)) if pd.notna(cn) else ""
-                            read_str = str(row.get(reads_col, ""))
-                            if not read_str or read_str == "nan":
-                                return cn_str
-                            return ";".join(cn_str for _ in read_str.split(";") if _.strip())
-                        single["per_read_copy_number"] = single.apply(_build_single_per_read, axis=1)
-                    else:
-                        single["per_read_copy_number"] = ""
+                fields = support_fields(single, str(single.iloc[0].get("reads", "")))
+                for name, value in fields.items():
+                    if name != "copy_number" or pd.notna(value):
+                        single[name] = value
                 out_groups.append(single)
                 continue
 
@@ -1681,28 +1608,10 @@ class EccDedup:
             else:
                 copy_number = pd.NA
 
-            # Build per-read copy_number mapping (read_name -> copyNum from TideHunter).
-            read_cn_map: dict[str, float] = {}
-            if reads_col and ColumnStandard.COPY_NUMBER in group_rows.columns:
-                for row_tuple in group_rows.itertuples(index=False):
-                    cn_val_raw = getattr(row_tuple, ColumnStandard.COPY_NUMBER, pd.NA)
-                    cn_val = float(cn_val_raw) if pd.notna(cn_val_raw) else 0.0
-                    read_str = str(getattr(row_tuple, reads_col, ""))
-                    for rname in read_str.split(";"):
-                        rname = rname.strip()
-                        if rname and rname != "nan" and rname != "":
-                            read_cn_map[rname] = max(read_cn_map.get(rname, 0.0), cn_val)
-
-            # Build semicolon-separated per-read copy_numbers aligned with merged_reads.
-            if merged_reads and read_cn_map:
-                per_read_cns = []
-                for rname in merged_reads.split(";"):
-                    rname = rname.strip()
-                    cn = read_cn_map.get(rname, 0.0)
-                    per_read_cns.append(str(int(cn)) if cn == int(cn) else str(cn))
-                per_read_cn_str = ";".join(per_read_cns)
-            else:
-                per_read_cn_str = ""
+            support = support_fields(group_rows, merged_reads)
+            if pd.notna(support["copy_number"]):
+                copy_number = support["copy_number"]
+            per_read_cn_str = support["per_read_copy_number"]
 
             # Numeric evidence fields
             def _agg_numeric(col: str, how: str) -> object:
@@ -1730,6 +1639,7 @@ class EccDedup:
             if ColumnStandard.COPY_NUMBER in rep_rows.columns:
                 rep_rows[ColumnStandard.COPY_NUMBER] = copy_number
             rep_rows["per_read_copy_number"] = per_read_cn_str
+            rep_rows["candidate_support"] = support["candidate_support"]
             rep_rows["num_merged"] = num_merged_total
             rep_rows["merged_from_ids"] = merged_from_ids
 
@@ -1748,7 +1658,7 @@ class EccDedup:
 
             # Recompute low_mapq/low_identity based on merged best values (if present).
             if ColumnStandard.MAPQ_BEST in rep_rows.columns:
-                mb = pd.to_numeric(rep_rows[ColumnStandard.MAPQ_BEST], errors="coerce").fillna(0).astype(int)
+                mb = pd.to_numeric(rep_rows[ColumnStandard.MAPQ_BEST], errors="coerce").astype("Float64")
                 rep_rows[ColumnStandard.LOW_MAPQ] = mb < int(CONF_MAPQ_LOW_THRESHOLD)
             if ColumnStandard.IDENTITY_BEST in rep_rows.columns:
                 ib = pd.to_numeric(rep_rows[ColumnStandard.IDENTITY_BEST], errors="coerce").fillna(0.0)
@@ -1823,6 +1733,7 @@ class EccDedup:
                 ColumnStandard.LOW_IDENTITY: df.get(ColumnStandard.LOW_IDENTITY, pd.NA),
                 "copy_number": copy_number,
                 "per_read_copy_number": df.get("per_read_copy_number", ""),
+                "candidate_support": df.get("candidate_support", ""),
                 "repeat_number": repeat_number,
                 "eccdna_type": "Uecc",
                 "num_merged": df.get("num_merged", 1),
@@ -1969,6 +1880,7 @@ class EccDedup:
                 ColumnStandard.LOW_IDENTITY: df.get(ColumnStandard.LOW_IDENTITY, pd.NA),
                 "copy_number": df.get(ColumnStandard.COPY_NUMBER, pd.NA),
                 "per_read_copy_number": df.get("per_read_copy_number", ""),
+                "candidate_support": df.get("candidate_support", ""),
                 "eccdna_type": "Mecc",
                 "hit_index": df["hit_index"],
                 "hit_count": df["hit_count"],
@@ -2130,20 +2042,15 @@ class EccDedup:
         df = df.sort_values(["type_prefix", "id_number"])
         df = df.drop(columns=["type_prefix", "id_number"])
 
-        # Handle segment indexing
-        if "segment_order" in df.columns:
-            try:
-                df["seg_index"] = pd.to_numeric(df["segment_order"], errors="coerce").astype(
-                    "Int64"
-                )
-            except (TypeError, ValueError):
-                df["seg_index"] = (
-                    df.groupby("eccDNA_id")[ColumnStandard.START0].rank(method="first").astype(int)
-                )
-        else:
-            df["seg_index"] = (
-                df.groupby("eccDNA_id")[ColumnStandard.START0].rank(method="first").astype(int)
-            )
+        validate_sequences(df)
+
+        # Use the traversal order supplied by the detector, never genomic start.
+        ordered_groups = []
+        for _, group in df.groupby("eccDNA_id", sort=False):
+            group = ordered_segments(group).copy()
+            group["seg_index"] = range(1, len(group) + 1)
+            ordered_groups.append(group)
+        df = pd.concat(ordered_groups, ignore_index=True)
 
         seg_total = df.groupby("eccDNA_id").size().rename("seg_total")
         df = df.merge(seg_total, on="eccDNA_id", how="left")
@@ -2212,6 +2119,7 @@ class EccDedup:
                 ColumnStandard.LOW_IDENTITY: df.get(ColumnStandard.LOW_IDENTITY, pd.NA),
                 "copy_number": df.get(ColumnStandard.COPY_NUMBER, pd.NA),
                 "per_read_copy_number": df.get("per_read_copy_number", ""),
+                "candidate_support": df.get("candidate_support", ""),
                 "num_merged": df.get("num_merged", 1),
                 "merged_from_ids": df.get("merged_from_ids", df["eccDNA_id"]),
                 "reads_count": df["reads_count"],
@@ -2275,16 +2183,18 @@ class EccDedup:
         junction_rows = []
         for eid, sub in core.sort_values(["eccDNA_id", "seg_index"]).groupby("eccDNA_id"):
             rows = list(sub.to_dict("records"))
-            for i in range(len(rows) - 1):
-                a, b = rows[i], rows[i + 1]
+            for i in range(len(rows)):
+                a, b = rows[i], rows[(i + 1) % len(rows)]
+                a_start, a_end = junction_end(a["start0"], a["end0"], a["strand"], outgoing=True)
+                b_start, b_end = junction_end(b["start0"], b["end0"], b["strand"], outgoing=False)
                 junction_rows.append(
                     {
                         "chrom1": a["chr"],
-                        "start1": int(a["end0"]) - 1 if pd.notna(a["end0"]) else pd.NA,
-                        "end1": a["end0"],
+                        "start1": a_start,
+                        "end1": a_end,
                         "chrom2": b["chr"],
-                        "start2": b["start0"],
-                        "end2": int(b["start0"]) + 1 if pd.notna(b["start0"]) else pd.NA,
+                        "start2": b_start,
+                        "end2": b_end,
                         "name": f"{eid}|seg{a['seg_index']}->seg{b['seg_index']}",
                         "score": a["reads_count"],
                         "strand1": a["strand"],
@@ -2312,6 +2222,7 @@ class EccDedup:
         prefix: Optional[str],
     ) -> None:
         """Write CeccDNA FASTA file."""
+        validate_sequences(df)
         fa_file = (
             output_dir / f"{prefix}_CeccDNA_C.fasta" if prefix else output_dir / "CeccDNA_C.fasta"
         )
@@ -2605,7 +2516,7 @@ class EccDedup:
                 processed_cecc = self.process_mecc_cecc(cecc_df, cecc_clusters, "Cecc")
                 # Merge near-identical Cecc calls with small boundary jitter (±10bp).
                 processed_cecc = self.merge_cecc_by_tolerance(processed_cecc, tolerance_bp=10)
-                # Deduplicate segments at same genomic position (different strands)
+                # Remove exact repeated records while retaining distinct oriented occurrences.
                 processed_cecc = self.dedupe_cecc_segments(processed_cecc)
                 processed_cecc = self.renumber_eccdna_ids(processed_cecc, "Cecc")
 

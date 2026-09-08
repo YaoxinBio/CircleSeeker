@@ -58,6 +58,7 @@ from circleseeker.modules.ecc_output_formatter import (
     generate_cecc_bed,
     generate_cecc_bedpe,
     generate_fasta_files,
+    validate_confirmed_cecc_sequences,
 )
 
 
@@ -190,6 +191,8 @@ def load_fasta(fasta_path: Path) -> dict[str, str]:
                     seqs[current_id] = "".join(current_seq)
                 # Extract base ID from full header
                 current_id = extract_base_id(line)
+                if current_id in seqs:
+                    raise ValueError(f"Duplicate output FASTA ID: {current_id}")
                 current_seq = []
             else:
                 current_seq.append(line)
@@ -313,21 +316,6 @@ def run(args: argparse.Namespace) -> int:
     # Generate reads table
     reads_df = generate_reads_table(uecc_df, mecc_df, cecc_df)
 
-    # Save CSV files
-    summary_df.to_csv(out_dir / f"{sample}_eccDNA_summary.csv", index=False)
-    regions_df.to_csv(out_dir / f"{sample}_eccDNA_regions.csv", index=False)
-    reads_df.to_csv(out_dir / f"{sample}_eccDNA_reads.csv", index=False)
-
-    logger.info("Saved %s_eccDNA_summary.csv (%d rows)", sample, len(summary_df))
-    logger.info("Saved %s_eccDNA_regions.csv (%d rows)", sample, len(regions_df))
-    logger.info("Saved %s_eccDNA_reads.csv (%d rows)", sample, len(reads_df))
-
-    # Generate BED files
-    generate_uecc_bed(regions_df, out_dir / "UeccDNA" / f"{sample}_uecc.bed")
-    generate_mecc_bed(regions_df, out_dir / "MeccDNA" / f"{sample}_mecc_sites.bed")
-    generate_cecc_bed(regions_df, out_dir / "CeccDNA" / f"{sample}_cecc_segments.bed")
-    generate_cecc_bedpe(regions_df, out_dir / "CeccDNA" / f"{sample}_cecc_junctions.bedpe")
-
     # Load and process FASTA files
     sequences = {}
 
@@ -352,6 +340,23 @@ def run(args: argparse.Namespace) -> int:
                 for old_id, seq in load_fasta(fasta_path).items():
                     new_id = id_map.get(old_id, old_id)
                     sequences[new_id] = seq
+
+    validate_confirmed_cecc_sequences(sequences, summary_df)
+
+    # Save CSV files
+    summary_df.to_csv(out_dir / f"{sample}_eccDNA_summary.csv", index=False)
+    regions_df.to_csv(out_dir / f"{sample}_eccDNA_regions.csv", index=False)
+    reads_df.to_csv(out_dir / f"{sample}_eccDNA_reads.csv", index=False)
+
+    logger.info("Saved %s_eccDNA_summary.csv (%d rows)", sample, len(summary_df))
+    logger.info("Saved %s_eccDNA_regions.csv (%d rows)", sample, len(regions_df))
+    logger.info("Saved %s_eccDNA_reads.csv (%d rows)", sample, len(reads_df))
+
+    # Generate BED files
+    generate_uecc_bed(regions_df, out_dir / "UeccDNA" / f"{sample}_uecc.bed")
+    generate_mecc_bed(regions_df, out_dir / "MeccDNA" / f"{sample}_mecc_sites.bed")
+    generate_cecc_bed(regions_df, out_dir / "CeccDNA" / f"{sample}_cecc_segments.bed")
+    generate_cecc_bedpe(regions_df, out_dir / "CeccDNA" / f"{sample}_cecc_junctions.bedpe")
 
     # Generate FASTA files
     generate_fasta_files(sequences, out_dir, summary_df, prefix=sample)

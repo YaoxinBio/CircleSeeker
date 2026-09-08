@@ -21,6 +21,8 @@ import pandas as pd
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from circleseeker.utils.read_support import support_fields
+from circleseeker.utils.circular_structure import cycle, canonical_cycle
 
 
 @dataclass
@@ -149,7 +151,7 @@ class BaseEccProcessor(ABC):
 
 
 class SequenceLibrary:
-    """Manages FASTA sequences with flexible lookup strategies."""
+    """Look up exact candidate IDs, allowing only the presentation suffix alias."""
 
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         """Initialize sequence library."""
@@ -166,50 +168,41 @@ class SequenceLibrary:
         self.primary_ids.clear()
 
         record_count = 0
+        normalized_ids: set[str] = set()
         for record in SeqIO.parse(str(fasta_file), "fasta"):
+            key = record.id.removesuffix("|circular")
+            if key in normalized_ids:
+                raise ValueError(f"Duplicate candidate FASTA ID: {key}")
+            normalized_ids.add(key)
             self.fasta_sequences[record.id] = str(record.seq)
             self.primary_ids.add(record.id)
-
-            if "|" in record.id:
-                base_id = record.id.split("|")[0]
-                if base_id not in self.fasta_sequences:
-                    self.fasta_sequences[base_id] = str(record.seq)
 
             record_count += 1
 
         self.logger.info(f"Loaded {record_count:,} sequences from {fasta_file.name}")
 
     def find_sequence(self, query_id: str) -> Optional[str]:
-        """Find sequence by query_id with multiple fallback strategies."""
+        """Find the same candidate with or without its circular suffix."""
         query_id = str(query_id)
 
         if query_id in self.fasta_sequences:
             return self.fasta_sequences[query_id]
 
-        if "|" in query_id:
-            base_id = query_id.split("|")[0]
-            if base_id in self.fasta_sequences:
-                return self.fasta_sequences[base_id]
-
+        key = query_id.removesuffix("|circular")
+        for candidate_id in (key, key + "|circular"):
+            if candidate_id in self.primary_ids:
+                return self.fasta_sequences[candidate_id]
         return None
 
 
 def extract_ring_sequence(seq_str: str, q_start: int, cons_len: int) -> str:
     """Extract circular sequence with proper wrapping."""
-    seq_len = len(seq_str)
-    start_index = q_start - 1
-
-    if q_start > cons_len:
-        start_index = (q_start - cons_len) - 1
-
-    end_index = start_index + cons_len
-
-    if end_index <= seq_len:
-        return seq_str[start_index:end_index]
-    else:
-        part1 = seq_str[start_index:]
-        part2 = seq_str[: (end_index - seq_len)]
-        return part1 + part2
+    if cons_len <= 0 or q_start < 1:
+        raise ValueError("Invalid circular sequence length or query start")
+    if len(seq_str) != 2 * cons_len or seq_str[:cons_len] != seq_str[cons_len:]:
+        raise ValueError("Sequence is not the doubled consensus for this candidate length")
+    start_index = (q_start - 1) % cons_len
+    return seq_str[start_index:start_index + cons_len]
 
 
 _RC_TABLE = str.maketrans(
@@ -350,6 +343,10 @@ class UeccProcessor(BaseEccProcessor):
                             all_reads.extend(r.strip() for r in reads_list if r.strip())
                     unique_reads = list(dict.fromkeys(all_reads))
                     representative["reads"] = ";".join(unique_reads) if unique_reads else ""
+
+                for name, value in support_fields(group, representative.get("reads", "")).items():
+                    if name != "copy_number" or pd.notna(value):
+                        representative[name] = value
 
                 # Add cluster metadata
                 representative["cluster_id"] = cluster_id
@@ -648,6 +645,11 @@ class MeccProcessor(BaseEccProcessor):
                 unique_reads = list(dict.fromkeys(all_reads))
                 representative_group["reads"] = ";".join(unique_reads) if unique_reads else ""
 
+            source_rows = pd.concat([query_id_to_group[qid] for qid in query_ids])
+            read_names = str(representative_group.iloc[0].get("reads", ""))
+            for name, value in support_fields(source_rows, read_names).items():
+                if name != "copy_number" or pd.notna(value):
+                    representative_group[name] = value
             rows_to_keep.append(representative_group)
 
         # Handle unclustered sequences
@@ -858,45 +860,7 @@ class CeccProcessor(BaseEccProcessor):
         if not all(col in df_group.columns for col in ["chr", "start0", "end0"]):
             return ""
 
-        # Sort by segment_in_circle if available
-        if "segment_in_circle" in df_group.columns:
-            df_sorted = df_group.sort_values("segment_in_circle")
-        else:
-            df_sorted = df_group
-
-        segments = []
-        for row in df_sorted.itertuples(index=False):
-            chrom = row.chr
-            start = row.start0
-            end = row.end0
-
-            try:
-                start = int(start)
-                end = int(end)
-                segments.append(f"{chrom}:{start}-{end}")
-            except (ValueError, TypeError):
-                continue
-
-        if not segments:
-            return ""
-
-        # Generate all rotations (both directions) and pick the lexicographically smallest one
-        # For a circular sequence [A, B, C], rotations are:
-        # [A, B, C], [B, C, A], [C, A, B]
-        n = len(segments)
-        rotations = []
-        for i in range(n):
-            rotated = segments[i:] + segments[:i]
-            rotations.append(";".join(rotated))
-
-        # Reverse traversal is equivalent for a circle: [A, B, C] == [C, B, A]
-        rev_segments = list(reversed(segments))
-        for i in range(n):
-            rotated = rev_segments[i:] + rev_segments[:i]
-            rotations.append(";".join(rotated))
-
-        # Return the lexicographically smallest rotation across both directions
-        return min(rotations)
+        return repr(canonical_cycle(cycle(df_group)))
 
     def cluster_by_signature(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -920,6 +884,8 @@ class CeccProcessor(BaseEccProcessor):
 
         for query_id, group in df.groupby("query_id"):
             signature = self.generate_cecc_signature(group)
+            if "eSeq" in group.columns:
+                signature += "|sequence:" + str(group.iloc[0]["eSeq"])
             signature_map[query_id] = signature
             segment_counts[query_id] = len(group)
             query_id_to_group[query_id] = group
@@ -985,6 +951,11 @@ class CeccProcessor(BaseEccProcessor):
                 unique_reads = list(dict.fromkeys(all_reads))
                 representative_group["reads"] = ";".join(unique_reads) if unique_reads else ""
 
+            source_rows = pd.concat([query_id_to_group[qid] for qid in query_ids])
+            read_names = str(representative_group.iloc[0].get("reads", ""))
+            for name, value in support_fields(source_rows, read_names).items():
+                if name != "copy_number" or pd.notna(value):
+                    representative_group[name] = value
             rows_to_keep.append(representative_group)
 
         # Handle unclustered sequences
@@ -1029,6 +1000,14 @@ class CeccProcessor(BaseEccProcessor):
 
             seq_str = self.seq_library.find_sequence(query_id)
 
+            if seq_str is None:
+                raise ValueError(f"Exact Cecc candidate sequence missing: {query_id}")
+            candidate_parts = str(query_id).removesuffix("|circular").split("|")
+            if "|" in str(query_id) and (len(candidate_parts) != 4 or int(candidate_parts[2]) != int(cons_len)):
+                raise ValueError(f"Cecc candidate ID and length disagree: {query_id}")
+            if len(seq_str) != 2 * int(cons_len):
+                raise ValueError(f"Cecc doubled-sequence length mismatch: {query_id}")
+
             # CeccDNA q_start is 0-based (LAST MAF format), unlike U/MeccDNA
             # which use 1-based coordinates from minimap2.  Convert to 1-based
             # for extract_ring_sequence (which does start_index = q_start - 1).
@@ -1041,10 +1020,9 @@ class CeccProcessor(BaseEccProcessor):
                     df.loc[query_mask, "eSeq"] = extracted_seq
                     sequences_found += 1
                 except (ValueError, IndexError, TypeError) as e:
-                    self.logger.debug(f"Failed to extract sequence for {query_id}: {e}")
-                    sequences_missing += 1
+                    raise ValueError(f"Invalid Cecc candidate sequence: {query_id}") from e
             else:
-                sequences_missing += 1
+                raise ValueError(f"Invalid Cecc candidate coordinates: {query_id}")
 
         self.logger.debug(f"Sequences extracted: {sequences_found}, missing: {sequences_missing}")
         return df
@@ -1152,12 +1130,12 @@ class CeccProcessor(BaseEccProcessor):
 
         initial_query_ids = df["query_id"].nunique()
 
-        # Apply clustering if requested
+        # Validate sequences before grouping; coordinates alone do not identify a molecule.
+        df = self.compute_sequences(df)
         if cluster and self.config.cluster_cecc:
             df = self.cluster_by_signature(df)
 
-        # Extract sequences and add IDs
-        df = self.compute_sequences(df)
+        # Add IDs to the representative records
         df = self.add_numbering_and_export(df)
         if "eccDNA_id" in df.columns:
             unassigned_mask = df["eccDNA_id"].isna() | (df["eccDNA_id"] == "NA")

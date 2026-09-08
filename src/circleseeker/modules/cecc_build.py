@@ -22,6 +22,7 @@ Requires LAST aligner (lastal, lastdb, last-split) to be installed.
 from __future__ import annotations
 
 import fcntl
+import math
 import logging
 import subprocess
 import time
@@ -41,6 +42,37 @@ except ImportError:
 
 from circleseeker.utils.logging import get_logger
 from circleseeker.utils.column_standards import ColumnStandard
+
+
+def _candidate_key(query_id: str) -> str:
+    """Normalize only the presentation suffix; never reduce an ID to its read."""
+    tokens = str(query_id).split()
+    if not tokens:
+        raise ValueError("Empty candidate ID")
+    key = tokens[0].removesuffix("|circular")
+    parts = key.split("|")
+    if len(parts) != 4 or not parts[0] or not parts[1]:
+        raise ValueError(f"Expected full read|repeat|length|copy candidate ID: {query_id}")
+    if int(parts[2]) <= 0 or not math.isfinite(float(parts[3])) or float(parts[3]) <= 0:
+        raise ValueError(f"Invalid candidate length or copy number: {query_id}")
+    return key
+
+
+def _metadata_for_candidate(query_id: str, metadata: Dict[str, dict]) -> dict:
+    """Use this candidate's self-describing ID, never another repeat of its read."""
+    if "|" not in str(query_id):
+        if query_id not in metadata:
+            raise ValueError(f"Exact query metadata missing: {query_id}")
+        return dict(metadata[query_id])
+    key = _candidate_key(query_id)
+    read, repeat, length, copies = key.split("|")
+    expected = {"reads": read, "length": int(length), "copy_number": float(copies)}
+    recorded = metadata.get(key)
+    if recorded is not None and recorded != expected:
+        raise ValueError(f"Candidate ID and recorded metadata disagree: {query_id}")
+    # Candidates without a filtered minimap2 alignment still have a validated
+    # FASTA header from tandem_to_ring and can be reconstructed by LAST.
+    return expected
 
 
 @dataclass
@@ -825,6 +857,8 @@ class CeccBuild:
                                 "start": start,
                                 "size": size,
                                 "strand": strand,
+                                "sequence": parts[6].upper(),
+                                "seq_size": seq_size,
                             }
                         else:
                             # Second 's' line is query
@@ -842,20 +876,25 @@ class CeccBuild:
                                 query_start = seq_size - start - size
                                 query_end = seq_size - start
 
-                            # Estimate identity (last-split doesn't provide it directly)
-                            # Use 95% as default since last-split filters low-quality
-                            identity = 95.0
+                            reference_text = ref_info["sequence"]
+                            query_text = parts[6].upper()
+                            if len(reference_text) != len(query_text):
+                                raise ValueError("MAF alignment strings differ in length")
+                            columns = [(a, b) for a, b in zip(reference_text, query_text) if a != "-" or b != "-"]
+                            matches = sum(a == b and a in "ACGT" for a, b in columns)
+                            identity = 100.0 * matches / len(columns) if columns else 0.0
+                            ref_start = ref_info["start"] if ref_info["strand"] == "+" else ref_info["seq_size"] - ref_info["start"] - ref_info["size"]
 
                             aln = LastAlignment(
                                 chrom=ref_info["chrom"],
-                                ref_start=ref_info["start"],
-                                ref_end=ref_info["start"] + ref_info["size"],
+                                ref_start=ref_start,
+                                ref_end=ref_start + ref_info["size"],
                                 query_start=query_start,
                                 query_end=query_end,
                                 query_len=query_len,
                                 score=current_score,
                                 identity=identity,
-                                strand="+" if query_strand == "+" else "-",
+                                strand="+" if query_strand == ref_info["strand"] else "-",
                             )
                             alignments[query_id].append(aln)
 
@@ -1013,8 +1052,8 @@ class CeccBuild:
         identity_min = min(identity_values) if identity_values else 0.0
 
         # LAST doesn't provide MAPQ, use score-based estimate
-        mapq_best = 60  # Assume high quality for LAST
-        mapq_min = 60
+        mapq_best = float("nan")  # LAST does not supply MAPQ
+        mapq_min = float("nan")
 
         # Coverage
         query_len = alns[0].query_len
@@ -1022,15 +1061,8 @@ class CeccBuild:
 
         # Confidence score
         chain_unique = len(unique_loci) / len(segments) if segments else 0.0
-        conf = self._geom_mean([
-            self._norm_mapq(mapq_best),
-            self._norm_identity(identity_best),
-            self._clamp01(cov_best),
-            self._clamp01(chain_unique),
-        ])
-
-        # Quality flags
-        low_mapq = mapq_best < self.MAPQ_LOW_THRESHOLD
+        conf = float("nan")  # No calibrated confidence without measured MAPQ
+        low_mapq = pd.NA
         low_identity = identity_best < self.IDENTITY_LOW_THRESHOLD
 
         return {
@@ -1060,69 +1092,57 @@ class CeccBuild:
         }
 
     def _extract_sequences(
-        self,
-        read_ids: Set[str],
-        fasta_file: Path,
-        output_fasta: Path,
+        self, read_ids: Set[str], fasta_file: Path, output_fasta: Path,
     ) -> int:
-        """Extract sequences for given read IDs from FASTA file."""
-        extracted = 0
-        with open(fasta_file, "r") as fin, open(output_fasta, "w") as fout:
-            current_id: Optional[str] = None
-            current_header: Optional[str] = None
-            current_seq: list[str] = []
-
+        """Preserve the read-selected pool; validate each complete repeat candidate."""
+        found: Set[str] = set()
+        header: Optional[str] = None
+        parts: list[str] = []
+        with open(fasta_file) as fin, open(output_fasta, "w") as fout:
+            def emit() -> None:
+                if header is None or header.split("|")[0] not in read_ids:
+                    return
+                key = _candidate_key(header)
+                if key in found:
+                    raise ValueError(f"Duplicate candidate in FASTA: {key}")
+                seq = "".join(parts)
+                length = int(key.split("|")[2])
+                if len(seq) != 2 * length or seq[:length] != seq[length:]:
+                    raise ValueError(f"Candidate FASTA is not the declared doubled consensus: {key}")
+                fout.write(f">{header}\n{seq}\n")
+                found.add(key)
             for line in fin:
                 line = line.strip()
                 if line.startswith(">"):
-                    # Save previous sequence
-                    if current_id and current_id in read_ids:
-                        fout.write(f">{current_header}\n")
-                        fout.write("".join(current_seq) + "\n")
-                        extracted += 1
-
-                    # Parse new header
-                    current_header = line[1:].split()[0]
-                    current_id = current_header.split("|")[0]
-                    current_seq = []
+                    emit()
+                    header = line[1:].split()[0]
+                    parts = []
                 else:
-                    current_seq.append(line)
-
-            # Handle last sequence
-            if current_id and current_id in read_ids:
-                fout.write(f">{current_header}\n")
-                fout.write("".join(current_seq) + "\n")
-                extracted += 1
-
-        return extracted
+                    parts.append(line)
+            emit()
+        return len(found)
 
     def _get_metadata_from_csv(self, df: pd.DataFrame) -> Dict[str, dict]:
-        """Extract metadata for each read from input CSV.
-
-        Uses vectorized operations for better performance with large DataFrames.
-        """
+        """Bind metadata to complete repeat candidates, with no read-level fallback."""
         metadata: Dict[str, dict] = {}
         if df.empty:
             return metadata
-
-        # Prepare columns with defaults using vectorized operations
-        query_ids = df["query_id"].astype(str) if "query_id" in df.columns else pd.Series([""] * len(df))
-        reads_col = df["reads"].astype(str) if "reads" in df.columns else query_ids
-        lengths = pd.to_numeric(df.get("length", pd.Series([0] * len(df))), errors="coerce").fillna(0).astype(int)
-        copy_numbers = pd.to_numeric(df.get("copy_number", pd.Series([1.0] * len(df))), errors="coerce").fillna(1.0)
-
-        # Build metadata using zip (more efficient than iterrows for simple extraction)
-        for query_id, reads, length, copy_number in zip(query_ids, reads_col, lengths, copy_numbers):
-            entry = {
-                "reads": reads,
-                "length": int(length),
-                "copy_number": float(copy_number),
-            }
-            if query_id and query_id not in metadata:
-                metadata[query_id] = entry
-            if reads and reads not in metadata:
-                metadata[reads] = entry
-
+        for row in df[["query_id", "reads", "length", "copy_number"]].itertuples(index=False):
+            if "|" not in str(row.query_id):
+                entry = {"reads": str(row.reads), "length": int(row.length), "copy_number": float(row.copy_number)}
+                if row.query_id in metadata and metadata[row.query_id] != entry:
+                    raise ValueError(f"Conflicting metadata for exact query: {row.query_id}")
+                metadata[row.query_id] = entry
+                continue
+            key = _candidate_key(row.query_id)
+            read, repeat, length, copies = key.split("|")
+            entry = {"reads": str(row.reads), "length": int(row.length),
+                     "copy_number": float(row.copy_number)}
+            if entry != {"reads": read, "length": int(length), "copy_number": float(copies)}:
+                raise ValueError(f"Candidate ID and metadata disagree: {key}")
+            if key in metadata and metadata[key] != entry:
+                raise ValueError(f"Conflicting metadata for candidate: {key}")
+            metadata[key] = entry
         return metadata
 
     def detect_circles_from_last(
@@ -1136,9 +1156,9 @@ class CeccBuild:
         for query_id, alns in alignments.items():
             # Extract base read ID
             base_id = query_id.split("|")[0]
-            meta = metadata.get(query_id) or metadata.get(
-                base_id, {"reads": base_id, "length": 0, "copy_number": 1.0}
-            )
+            meta = _metadata_for_candidate(query_id, metadata)
+            if any(aln.query_len != 2 * meta["length"] for aln in alns):
+                raise ValueError(f"LAST query length disagrees with candidate metadata: {query_id}")
 
             result = self._detect_single_query_last(query_id, alns, meta)
             if result is None:
@@ -1572,9 +1592,9 @@ class CeccBuild:
 
             # Step 5: Build output
             base_id = query_id.split("|")[0]
-            meta = metadata.get(query_id) or metadata.get(
-                base_id, {"reads": base_id, "length": 0, "copy_number": 1.0}
-            )
+            meta = _metadata_for_candidate(query_id, metadata)
+            if any(aln.query_len != 2 * meta["length"] for aln in alns):
+                raise ValueError(f"LAST query length disagrees with candidate metadata: {query_id}")
 
             # Get unique loci in cycle order
             unique_cycle_loci = []
@@ -1610,19 +1630,13 @@ class CeccBuild:
             identity_best = max(identity_values) if identity_values else 0.0
             identity_min = min(identity_values) if identity_values else 0.0
 
-            mapq_best = 60  # LAST doesn't provide MAPQ
-            mapq_min = 60
+            mapq_best = float("nan")  # LAST does not provide MAPQ
+            mapq_min = float("nan")
 
             # Confidence score
             chain_unique = len(unique_cycle_loci) / len(alns) if alns else 0.0
-            conf = self._geom_mean([
-                self._norm_mapq(mapq_best),
-                self._norm_identity(identity_best),
-                self._clamp01(cov_best),
-                self._clamp01(chain_unique),
-            ])
-
-            low_mapq = mapq_best < self.MAPQ_LOW_THRESHOLD
+            conf = float("nan")  # No calibrated confidence without measured MAPQ
+            low_mapq = pd.NA
             low_identity = identity_best < self.IDENTITY_LOW_THRESHOLD
 
             # Determine class

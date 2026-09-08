@@ -252,27 +252,12 @@ def ecc_packager(pipeline: Pipeline) -> None:
     )
 
     pipeline.logger.info("Running ecc_packager module to organize final results")
-    packager_success = False
     try:
         result_code = ecc_packager_module.run(mock_args)
-        if result_code == 0:
-            packager_success = True
-            pipeline.logger.info(f"Results successfully packaged in: {final_output_root}")
-        else:
-            pipeline.logger.warning("ecc_packager completed with warnings")
+        if result_code != 0:
+            raise PipelineError(f"ecc_packager failed with exit code {result_code}")
+        pipeline.logger.info(f"Results successfully packaged in: {final_output_root}")
     except (OSError, ValueError, RuntimeError) as exc:
-        pipeline.logger.warning(f"ecc_packager encountered issues: {exc}")
-
-    if not packager_success:
-        pipeline._create_basic_output_structure(
-            final_output_root,
-            uecc_dir=uecc_dir,
-            mecc_dir=mecc_dir,
-            cecc_dir=cecc_dir,
-            inferred_dir=inferred_dir,
-            merged_csv=unified_csv,
-            html_report=html_report,
-            text_summary=text_summary,
-        )
+        raise PipelineError(f"ecc_packager failed: {exc}") from exc
 
     pipeline._set_result(ResultKeys.FINAL_RESULTS, str(final_output_root))

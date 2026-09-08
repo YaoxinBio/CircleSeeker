@@ -23,6 +23,40 @@ spec.loader.exec_module(ecc_packager)
 class TestEccPackager:
     """Test cases for ecc_packager module."""
 
+    @pytest.mark.parametrize("sequence", [None, "ACGT", "ACGT" * 100])
+    def test_cecc_sequence_is_checked_before_tables_are_written(self, tmp_path, sequence):
+        from types import SimpleNamespace
+
+        cecc_dir = tmp_path / "source"
+        cecc_dir.mkdir()
+        unified = cecc_dir / "unified.csv"
+        unified.write_text(
+            "eccDNA_id,eccDNA_type,State,Length\n"
+            "CeccDNA1,CeccDNA,Confirmed,400\n"
+        )
+        (cecc_dir / "sample_CeccSegments.core.csv").write_text(
+            "eccDNA_id,chr,start0,end0,strand,seg_index,length,reads,copy_number\n"
+            "CeccDNA1,chr1,100,300,+,1,400,read1,3\n"
+            "CeccDNA1,chr2,500,700,-,2,400,read1,3\n"
+        )
+        if sequence is not None:
+            (cecc_dir / "sample_CeccDNA_C.fasta").write_text(f">CeccDNA1\n{sequence}\n")
+        output = tmp_path / "output"
+        args = SimpleNamespace(
+            sample_name="sample", out_dir=str(output), unified_csv=str(unified),
+            uecc_dir=None, mecc_dir=None, cecc_dir=str(cecc_dir), inferred_dir=None,
+            html=None, text=None, id_width=4, overwrite=False, dry_run=False, verbose=False,
+        )
+        if sequence is not None and len(sequence) == 400:
+            assert ecc_packager.run(args) == 0
+            assert (output / "sample_eccDNA_summary.csv").exists()
+            assert (output / "CeccDNA/sample_cecc.fasta").exists()
+        else:
+            with pytest.raises(ValueError, match="Cecc"):
+                ecc_packager.run(args)
+            for suffix in ("summary.csv", "regions.csv", "reads.csv", "all.fasta"):
+                assert not (output / ("sample_eccDNA_" + suffix)).exists()
+
     def test_log_function(self, caplog):
         """Test the log function."""
         import logging
@@ -286,6 +320,12 @@ class TestExtractBaseId:
 
 class TestLoadFasta:
     """Test cases for load_fasta."""
+
+    def test_duplicate_normalized_ids_are_rejected(self, tmp_path):
+        fa = tmp_path / "duplicate.fasta"
+        fa.write_text(">CeccDNA1|first\nACGT\n>CeccDNA0001|second\nAAAA\n")
+        with pytest.raises(ValueError, match="Duplicate output FASTA ID"):
+            ecc_packager.load_fasta(fa)
 
     def test_load_single_sequence(self, tmp_path):
         fa = tmp_path / "test.fasta"

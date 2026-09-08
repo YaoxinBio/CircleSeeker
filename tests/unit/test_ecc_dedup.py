@@ -141,14 +141,17 @@ def test_ecc_dedup_subset(tmp_path):
             {
                 "eccDNA_id": "C1",
                 "chr": "chr1",
-                "start0": 0,
-                "end0": 100,
+                "start0": 100,
+                "end0": 200,
                 "strand": "+",
                 "length": 200,
                 "match_degree": 90.0,
                 "copy_number": 1,
                 "reads": "cread1",
             },
+            {"eccDNA_id": "C1", "chr": "chr1", "start0": 300, "end0": 400,
+             "strand": "+", "length": 200, "match_degree": 90.0,
+             "copy_number": 1, "reads": "cread1"},
             {
                 "eccDNA_id": "C2",
                 "chr": "chr1",
@@ -173,6 +176,9 @@ def test_ecc_dedup_subset(tmp_path):
             },
         ]
     ).to_csv(cecc_csv, index=False)
+    cecc_input = pd.read_csv(cecc_csv)
+    cecc_input["eSeq"] = "ACGT" * 50
+    cecc_input.to_csv(cecc_csv, index=False)
     cecc_clstr.write_text(
         "id,cluster,is_representative\n"
         "C1,cgrp1,false\n"
@@ -292,6 +298,10 @@ def test_cecc_tolerance_merge_10bp(tmp_path):
             },
         ]
     ).to_csv(cecc_csv, index=False)
+
+    cecc_input = pd.read_csv(cecc_csv)
+    cecc_input["eSeq"] = "ACGT" * 50
+    cecc_input.to_csv(cecc_csv, index=False)
 
     # Put them in different CD-HIT clusters (simulate missed clustering).
     cecc_clstr.write_text(
@@ -821,14 +831,14 @@ class TestDedupeCeccSegments:
     def processor(self):
         return EccDedup()
 
-    def test_position_duplicate_removal(self, processor):
+    def test_opposite_strand_occurrences_preserved(self, processor):
         df = pd.DataFrame({
             "eccDNA_id": ["C1", "C1"], ColumnStandard.CHR: ["chr1", "chr1"],
             ColumnStandard.START0: [100, 100], ColumnStandard.END0: [200, 200],
             ColumnStandard.STRAND: ["+", "-"],
         })
         result = processor.dedupe_cecc_segments(df)
-        assert len(result) == 1
+        assert len(result) == 2
 
     def test_different_positions_kept(self, processor):
         df = pd.DataFrame({
@@ -839,14 +849,14 @@ class TestDedupeCeccSegments:
         result = processor.dedupe_cecc_segments(df)
         assert len(result) == 2
 
-    def test_tolerance(self, processor):
+    def test_nearby_distinct_occurrences_preserved(self, processor):
         df = pd.DataFrame({
             "eccDNA_id": ["C1", "C1"], ColumnStandard.CHR: ["chr1", "chr1"],
             ColumnStandard.START0: [100, 105], ColumnStandard.END0: [200, 195],
             ColumnStandard.STRAND: ["+", "-"],
         })
         result = processor.dedupe_cecc_segments(df, position_tolerance=100)
-        assert len(result) == 1
+        assert len(result) == 2
 
     def test_empty(self, processor):
         result = processor.dedupe_cecc_segments(pd.DataFrame())
@@ -868,6 +878,7 @@ class TestMergeCeccByTolerance:
             ColumnStandard.LENGTH: [100, 100, 103, 94],
             "reads": ["rA", "rA", "rB", "rB"],
         })
+        df["eSeq"] = "ACGT" * 50
         result = processor.merge_cecc_by_tolerance(df, tolerance_bp=10)
         assert result[ColumnStandard.ECCDNA_ID].nunique() == 1
 
@@ -880,6 +891,7 @@ class TestMergeCeccByTolerance:
             ColumnStandard.STRAND: ["+", "+"],
             ColumnStandard.LENGTH: [100, 100],
         })
+        df["eSeq"] = "ACGT" * 50
         result = processor.merge_cecc_by_tolerance(df, tolerance_bp=10)
         assert result[ColumnStandard.ECCDNA_ID].nunique() == 2
 
@@ -906,6 +918,7 @@ class TestMergeCeccByTolerance:
             ColumnStandard.LENGTH: [100, 100, 100],
             "reads": ["r1", "r2", "r3"],
         })
+        df["eSeq"] = "ACGT" * 50
         result = processor.merge_cecc_by_tolerance(df, tolerance_bp=10)
         # C1-C2 within 10bp, C2-C3 within 10bp -> all merged via union-find
         assert result[ColumnStandard.ECCDNA_ID].nunique() <= 2
