@@ -2,7 +2,9 @@
 
 The 1.5.2 release preparation derives from tag `v1.5.1`, commit
 `87ae7f09c11a4795532a7524db1958c0c11a5b2d` (2026-08-16), and the validated
-repair commit `055110f531a9e08936f8c526da5c71950a6bbcee`.
+repair commit `44c79b8eafdb1f60f949d69c9eeab12a69ce570b`. The earlier draft
+based on `055110f` is obsolete. Final publication and replacement of archived
+analyses require separate acceptance.
 
 The dataset rebuild uses the frozen internal version `1.5.1+ceccfix.20260908`.
 The release preparation identifies itself as `1.5.2`; its algorithm source is
@@ -30,16 +32,21 @@ An earlier audit had established three more examples. The tests in
   opposite traversal reverses order **and flips every strand**. Sequence FASTA
   canonicalization can choose another origin/strand; it represents the same
   circular sequence, not a claim that FASTA position zero is the first locus.
-* Cecc coordinate signatures preserve directed traversal. Early grouping also
-  requires equal canonical sequence. CD-HIT clusters are split when their
-  directed structures disagree. The secondary merge preserves the baseline's
-  structural-coordinate definition: equivalent directed cycles within the
-  original 10 bp tolerance may consolidate differing read consensus sequences.
-  It does not add a new nucleotide-variant threshold. Different directions or
-  orders cannot merge merely because their unordered coordinates match. Each
-  retained representative's own sequence and length remain linked and validated.
-  The audit's experimental exact-equality and 1% sequence gates were not adopted:
-  simulation read labels showed they could split copies of the same truth circle.
+* Cecc coordinate signatures preserve directed traversal and the baseline's
+  structural catalogue unit. Early grouping does not require exact equality of
+  consensus sequences. Every candidate's sequence and metadata are validated
+  before grouping; one complete representative is retained and support is
+  aggregated without replacing its sequence, length or segment directions.
+* CD-HIT defines the subsequent sequence clusters using the existing thresholds.
+  Alignment differences among members do not split those clusters into more
+  molecule calls. Repeats can give even identical circular sequences different
+  genomic placements. Keep the chosen member's complete directed structure,
+  rather than requiring every supporting alignment to share its placement.
+* The secondary coordinate-only merge across sequence clusters still requires
+  equivalent directed cycles within the original 10 bp tolerance. Different
+  directions or orders cannot merge merely because unordered coordinates match.
+  This pass adds no nucleotide-variant threshold. Each retained representative's
+  own sequence, length and directed path remain linked and validated.
 * Overlapping or opposite-strand occurrences within a circle remain distinct.
   Only exact repeated segment records are removed; the old proximity rule could
   remove genuine occurrences.
@@ -68,6 +75,22 @@ An earlier audit had established three more examples. The tests in
   Duplicate normalized FASTA IDs are rejected rather than silently overwritten.
 * Final FASTA excludes inferred candidates removed by unification; retained
   sequence IDs follow the same final catalogue as the tables and BED files.
+* A selected Cecc segment covering an entire consensus period cannot be combined
+  with additional loci into a nonoverlapping chimeric circle. Repeated locus
+  labels alone do not establish a valid partition of that period. The check
+  covers both repeated-cycle and first-half fallback selection.
+* Inferred simple paths and cycles follow actual retained graph edges. Opposite
+  read traversals reverse segment order and complement both directions. Resolve
+  per-edge directions consistently, including the closing edge for cycles; do
+  not infer a multi-segment path from node insertion order or per-node majority.
+  Direction evidence comes only from edges retained by the existing breakpoint
+  depth filter. A supported open path keeps its unobserved closure as inferred
+  (`ctc=False`); two-segment closure needs two distinct junctions. Branched
+  components retain the existing fallback; this is not a general graph assembler.
+* The inferred overview retains explicit segment strands, including single-base
+  segments, with coordinate order for legacy readers. Curation validates strand
+  lists and includes direction when grouping. Reference FASTA extraction reverse
+  complements each negative segment and concatenates in `seg_index` order.
 
 ## Validation and use
 
@@ -77,15 +100,76 @@ segments, or omitted closure). Their expectations have been corrected. Other
 fixtures have been corrected to supply genuinely doubled sequences of their
 stated length; invalid inputs are now tested for rejection separately.
 
-The repair candidate passed 1,269 tests (one deselected) with 72.28% coverage,
-exceeding the configured 50% threshold, and mypy passed all 59 source files.
-Checks ran on `fat2`, explicitly selecting this checkout with `PYTHONPATH=src`.
-The CLI reported `1.5.1+ceccfix.20260908`. Regression tests include the actual
-pipeline packager and verify that sequence validation failures cannot publish
-fallback results. Separately, 55 previously flagged real records passed the
-candidate replay through Cecc construction, U/M/C processing, CD-HIT,
-deduplication and standalone formatting. That replay is not a full raw-input
-pipeline rerun or a final catalogue replacement.
+The initial repair at `055110f` introduced a specificity regression. It split
+existing CD-HIT clusters by directed alignment and 10 bp coordinate agreement,
+and required exact consensus equality in early structural grouping. Neither
+condition is required to keep the selected representative internally consistent.
+Both additional conditions are removed in this candidate; full candidate identity,
+representative structure and support accounting remain enforced.
+
+Controlled replay of the same 19 completed benchmark scenarios gave:
+
+| Source / controlled change | TP | FP |
+|---|---:|---:|
+| Historical v1.5.1 | 153,809 | 1,274 |
+| 055110f repair, reproduced control | 153,815 | 1,624 |
+| Remove CD-HIT cluster partition only | 153,811 | 1,283 |
+| Also remove early exact-sequence grouping | 153,809 | 1,276 |
+| Also repair residual cycle evidence and inferred direction | 153,809 | 1,271 |
+
+All 19 frozen controls reproduced the failed repair metrics. The first two
+changes alone matched historical metrics in 17 scenarios, leaving one additional
+FP in each of ara_UMC_5200_rep3_30X_HiFi and human_U_10000_rep2_30X_HiFi. Those two
+cases motivated the further evidence-based repairs described below. These are net differences under a fixed evaluator, not a one-to-one attribution
+of every newly numbered record. The cohort replays saved Cecc intermediates through
+clustering, deduplication, unification and packaging. It reuses U/M and inference
+only after checking that the supporting-read partition is unchanged; it is not
+19 complete raw-read runs.
+
+The first minimal candidate passed 1,273 tests. With the residual repairs and
+retained-edge boundary check, the final candidate passes 1,293 tests (one
+deselected), with 72.49% coverage, and mypy passes all 59 source files.
+Checks ran on `fat2`, explicitly selecting the isolated checkout. Four cluster
+regression cases and the early-grouping case fail against 055110f and pass with
+this repair. AST checks link the tested methods to the controlled ablations.
+Regression tests also cover the actual pipeline packager and propagation of
+sequence-validation failures.
+
+All 55 previously flagged real records pass replay from their saved original
+alignments through Cecc construction, U/M/C processing, CD-HIT, deduplication and
+formatting. Every final sequence and directed path must belong to its selected
+representative. In the HeLa_T7_HiFi / CeccDNA0055 case, one support candidate has an
+alternative genomic placement; its identical canonical sequence and actual shared
+CD-HIT cluster were independently verified. Requiring every support alignment to
+have the representative's placement would recreate the faulty partition rule.
+This scoped replay is not a full-library rebuild or a final catalogue replacement.
+
+A complete raw-input run of ara_UMC_5200_rep1_30X_HiFi also passed: 16 stages,
+16 threads, verified turbo storage under `/dev/shm`, 5,054 final records,
+TP 5,016 and FP 38, with all type metrics matching historical results. Sequence
+lengths, supporting-copy sums, IDs and directed closure checks passed.
+
+Integrity alone is insufficient for release acceptance. A separate benchmark gate
+checks TP, recall, precision, F1 and FP; replay rejects all 19 failed repair outputs
+and accepts unchanged baseline controls. It was also applied to the raw-input run.
+The original `055110f` batch was cancelled. The author subsequently authorized
+a new full rebuild with `44c79b8`; see the dated release notes for its status.
+Formal publication remains pending completion and acceptance of that rebuild.
+The residual repair replays actual saved SplitReads intersection/end evidence
+through graph resolution, strand-preserving curation, unification and packaging.
+The Ara case follows Chr5+ -> Chr4+ -> Chr1+, equivalent to the existing Confirmed
+cycle, and now merges correctly without restoring genomic sorting. The human
+case is rejected because one selected alignment already spans its full 3,562 bp
+consensus; the extra 110 bp locus cannot form a nonoverlapping chimeric partition.
+Original v1.5.1 also reports this candidate on the same MAF, so repairing the
+present evidence does not require recovering the missing historical MAF.
+
+The final residual candidate replays 19 scenarios with TP 153,809 and FP 1,271,
+passing the per-type and Overall non-regression gate. All 19 metrics are unchanged
+by the additional retained-edge boundary check; 17 scenarios exactly match the
+historical metrics and two improve specificity. Raw-input validation and replay
+of the affected inference stages are recorded separately. Full-cohort rebuild and scientific-result acceptance remain
+separate; these diagnostics do not replace archived analyses.
 
 Before replacing historical outputs, validate the changed software, replay real
 candidate cases, re-evaluate affected benchmarks, then rebuild the relevant

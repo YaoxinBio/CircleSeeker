@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-SOURCE_COMMIT = "055110f531a9e08936f8c526da5c71950a6bbcee"
+SOURCE_COMMIT = "44c79b8eafdb1f60f949d69c9eeab12a69ce570b"
 REPOSITORY = "https://github.com/YaoxinBio/CircleSeeker"
 
 
@@ -20,6 +20,9 @@ def main() -> None:
 
     def git(*items: str) -> str:
         return subprocess.check_output(["git", "-C", str(root), *items], text=True).strip()
+
+    if args.output and git("status", "--porcelain", "--untracked-files=normal"):
+        raise SystemExit("Commit release inputs before writing source provenance")
 
     tree = ast.parse((root / "src/circleseeker/__version__.py").read_text())
     versions = [ast.literal_eval(node.value) for node in tree.body

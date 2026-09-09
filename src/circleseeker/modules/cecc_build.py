@@ -1478,6 +1478,8 @@ class CeccBuild:
                             first_half_q_coords[locus_id] = (aln.query_start, aln.query_end)
 
             if len(first_half_loci) >= 2:
+                if any(end - start >= cons_len for start, end in first_half_q_coords.values()):
+                    return None
                 # Build strand transitions
                 strand_trans: List[str] = []
                 for i in range(len(first_half_strands) - 1):
@@ -1509,6 +1511,12 @@ class CeccBuild:
             else:
                 # Other loci: use first occurrence
                 locus_q_coords[locus_id] = locus_q_coords_first.get(locus_id, (0, 0))
+
+        # A selected segment that already spans the complete consensus cannot
+        # be augmented with other loci into a nonoverlapping chimeric cycle.
+        # A repeated genomic locus alone is insufficient evidence of closure.
+        if any(end - start >= cons_len for start, end in locus_q_coords.values()):
+            return None
 
         return cycle_loci, strand_trans, locus_q_coords
 

@@ -14,6 +14,8 @@ Comprehensive detection and characterization of extrachromosomal circular DNA (e
 > **1.5.2 release preparation:** distribution files and validation are being prepared.
 > The GitHub release remains a draft until the complete dataset rebuild is accepted.
 > See [release notes](docs/releases/v1.5.2.md) for changes and validation scope.
+> This preparation matches repaired computation commit `44c79b8`. The earlier
+> `5b6a79f` GitHub draft and its assets are obsolete and await replacement.
 
 ## eccDNA Classification
 

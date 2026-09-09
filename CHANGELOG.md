@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Keep repeat-candidate identity, representative sequence, length and RCA support linked.
 - Preserve directed circular segment order through classification and structural deduplication.
+- Retain baseline CD-HIT clusters and structural grouping without the preliminary repair's over-splitting.
+- Reject a chimeric partition when one selected alignment already covers the entire consensus period.
+- Resolve inferred paths and cycles from retained edges and preserve segment strands through curation and FASTA extraction.
 - Export strand-aware Cecc junctions including the last-to-first closure.
 - Measure LAST alignment identity and leave unavailable MAPQ/confidence fields missing.
 - Fail final packaging on inconsistent confirmed Cecc sequences and exclude removed inferred FASTA records.

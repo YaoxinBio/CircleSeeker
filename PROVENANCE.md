@@ -13,16 +13,24 @@ repository continues that version sequence; it does not redefine those versions.
 | Identity | Role |
 |---|---|
 | v1.5.1 / `87ae7f09c11a4795532a7524db1958c0c11a5b2d` | Historical analysis baseline |
-| `1.5.1+ceccfix.20260908` / `055110f531a9e08936f8c526da5c71950a6bbcee` | Frozen repair code used for dataset rebuilding |
-| v1.5.2 preparation | Same algorithm source as the repair commit; updated version, packaging and documentation |
+| `055110f531a9e08936f8c526da5c71950a6bbcee` | Rejected preliminary repair; its dataset batch and prior release draft are obsolete |
+| `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repaired source used by the current full-input dataset rebuild |
+| v1.5.2 preparation | Same algorithm source as `44c79b8`; updated version, packaging and documentation; formal publication pending |
 
 The release comparison excludes only `src/circleseeker/__version__.py` when
 checking algorithm-source equality. Rebuilding with the repair commit is not
 retroactively recorded as running an already-published v1.5.2.
+The preliminary and current repairs shared an internal version string, so that
+string alone cannot identify an analysis. Use the full Git commit and recorded
+source checksums. Existing GitHub draft assets target `5b6a79f` and contain the
+rejected `055110f` implementation until explicitly replaced; they are not the
+artifacts built from this repaired preparation branch.
 
 All 194 commits reachable from the captured historical branches, tags and four
 pull-request heads were preserved locally. The three repair commits bring that
-history to 197 commits before release preparation. Historical PR heads and the
+history to 197 commits before the initial release preparation. Two subsequent
+repair commits (`2df5dc0` and `44c79b8`) are merged with that preparation history,
+preserving their original identities. Historical PR heads and the
 ONT development branch are retained as archival branches, not merged into the
 release implementation. GitHub issues, review conversations and release asset
 metadata are platform records and are not automatically recreated by Git copying.

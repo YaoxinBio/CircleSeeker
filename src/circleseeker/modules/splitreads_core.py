@@ -561,7 +561,9 @@ def check_breakpoint_direction(df_check: pd.DataFrame) -> list[tuple]:
                 list_5 = df_check[l1]["ovl_5end"].tolist()
                 list_3 = df_check[l1]["ovl_3end"].tolist()
                 if list_3[1] == 1 and list_5[0] == 1:
-                    pair = (list_mergeid[1], list_mergeid[0], "-_-", True)
+                    # Reversing a traversal also complements both strands.
+                    # This is the same edge as the opposite read's +/+ hit.
+                    pair = (list_mergeid[1], list_mergeid[0], "+_+", True)
                     list_pairs.append(pair)
 
             if list_check[0] == -1 and list_check[1] == 1:
@@ -638,6 +640,73 @@ def chk_circular_subgraph(
 # ============================================================================
 # Main SplitReads-Core Class
 # ============================================================================
+
+
+def _supported_component_traversal(
+    graph: nx.Graph,
+    pair_strands: dict[tuple[str, str], set[str]],
+) -> Optional[tuple[list[str], tuple[str, ...], bool]]:
+    """Resolve a simple path/cycle from observed edges and compatible directions.
+
+    An open path remains inferred: its unobserved closing edge is not promoted
+    to observed evidence. Node insertion order and strand majority are irrelevant.
+    """
+    endpoints = sorted(node for node in graph if graph.degree[node] == 1)
+    if len(endpoints) == 2 and all(graph.degree[node] <= 2 for node in graph):
+        order = nx.shortest_path(graph, endpoints[0], endpoints[1])
+        require_closure = False
+    elif len(graph) > 2 and all(graph.degree[node] == 2 for node in graph):
+        start = min(graph)
+        order = [start, min(graph.neighbors(start))]
+        while len(order) < len(graph):
+            next_nodes = sorted(set(graph.neighbors(order[-1])) - set(order))
+            if len(next_nodes) != 1:
+                return None
+            order.append(next_nodes[0])
+        require_closure = True
+    else:
+        return None
+    if len(order) != len(graph):
+        return None
+
+    opposite = {"+": "-", "-": "+"}
+
+    def allowed(left: str, right: str) -> set[tuple[str, str]]:
+        result = set()
+        for value in pair_strands.get((left, right), set()):
+            parts = value.split("_")
+            if len(parts) == 2 and all(p in opposite for p in parts):
+                result.add((parts[0], parts[1]))
+        for value in pair_strands.get((right, left), set()):
+            parts = value.split("_")
+            if len(parts) == 2 and all(p in opposite for p in parts):
+                result.add((opposite[parts[1]], opposite[parts[0]]))
+        return result
+
+    # Retain the smallest compatible path for each first/last strand pair.
+    # There are at most four states, even for a long component.
+    states: dict[tuple[str, str], tuple[str, ...]] = {
+        (strand, strand): (strand,) for strand in ("+", "-")
+    }
+    for left, right in zip(order, order[1:]):
+        transitions = allowed(left, right)
+        next_states: dict[tuple[str, str], tuple[str, ...]] = {}
+        for path in states.values():
+            for source, target in sorted(transitions):
+                if source == path[-1]:
+                    key = (path[0], target)
+                    candidate = path + (target,)
+                    if key not in next_states or candidate < next_states[key]:
+                        next_states[key] = candidate
+        states = next_states
+    if not states:
+        return None
+    closure = allowed(order[-1], order[0])
+    closed = [path for path in states.values() if (path[-1], path[0]) in closure]
+    if require_closure and not closed:
+        return None
+    chosen = min(closed or list(states.values()))
+    return order, chosen, bool(closed)
 
 
 class SplitReadsCore:
@@ -964,7 +1033,12 @@ class SplitReadsCore:
             tup = self._resolve_component_regions(
                 idx, comp_nodes, G, dict_pair_strand, dict_majority_strand
             )
-            list_graph_summary.append(tup)
+            if tup[1]:
+                list_graph_summary.append(tup)
+            else:
+                self.logger.warning(
+                    "Unresolved component ec%d: no consistent directed traversal", idx
+                )
 
         if not list_graph_summary:
             return self._write_empty_output(output_dir)
@@ -1007,6 +1081,22 @@ class SplitReadsCore:
         regions, num_nodes, can_be_solved, contain_selfloop, is_cyclic = chk_circular_subgraph(
             G, subgraph, dict_pair_strand
         )
+
+        simple_graph = nx.Graph(subgraph)
+        simple_graph.remove_edges_from(nx.selfloop_edges(simple_graph))
+        if len(nodes) > 1 and all(simple_graph.degree[node] <= 2 for node in nodes):
+            # Direction evidence must come from edges retained by the existing
+            # breakpoint-depth filter, including any proposed closing edge.
+            supported_pairs = {
+                (left, right): dict_pair_strand.get((left, right), set())
+                for left, right in G.subgraph(comp_nodes).edges()
+            }
+            traversal = _supported_component_traversal(simple_graph, supported_pairs)
+            if traversal is None:
+                return (gname, "", num_nodes, False, contain_selfloop, False)
+            order, strands, observed_closure = traversal
+            regions = ",".join(f"{node}_{strand}" for node, strand in zip(order, strands))
+            return (gname, regions, len(order), True, contain_selfloop, observed_closure)
 
         if len(nodes) == 1:
             pair_key = (nodes[0], nodes[0])
