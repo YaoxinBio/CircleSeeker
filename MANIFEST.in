@@ -1,0 +1,6 @@
+include CHANGELOG.md CITATION.cff COMMERCIAL_LICENSE.md PROVENANCE.md
+include environment.yml pytest.ini
+recursive-include conda-recipe *.yaml *.md *.sh
+recursive-include docs *.md
+recursive-include scripts *.py
+recursive-include tests *.py
