@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Export strand-aware Cecc junctions including the last-to-first closure.
 - Measure LAST alignment identity and leave unavailable MAPQ/confidence fields missing.
 - Fail final packaging on inconsistent confirmed Cecc sequences and exclude removed inferred FASTA records.
+- Register the canonical `circleseeker` command once. The case-only `CircleSeeker` alias caused duplicate-file uninstall failures on case-insensitive filesystems; use lowercase in scripts on all platforms.
 
 ### Changed
 - Move active maintenance to YaoxinBio/CircleSeeker while preserving original authors and Git history.

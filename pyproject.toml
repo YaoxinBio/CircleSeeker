@@ -60,7 +60,6 @@ docs = [
 
 [project.scripts]
 circleseeker = "circleseeker.cli:main"
-CircleSeeker = "circleseeker.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/YaoxinBio/CircleSeeker"

@@ -49,3 +49,13 @@ def test_version_is_valid_pep440() -> None:
 
     v = Version(circleseeker.__version__)
     assert v.release  # must have at least a major.minor.micro tuple
+
+
+def test_console_commands_do_not_collide_on_case_insensitive_filesystems() -> None:
+    """Case-only entry points share a file on macOS and break pip uninstall."""
+    root = Path(__file__).resolve().parents[2]
+    project = (root / "pyproject.toml").read_text(encoding="utf-8")
+    section = project.split("[project.scripts]", 1)[1].split("\n[", 1)[0]
+    commands = re.findall(r"^([A-Za-z_][A-Za-z_0-9-]*)\s*=", section, re.MULTILINE)
+    assert "circleseeker" in commands
+    assert len({name.casefold() for name in commands}) == len(commands)
