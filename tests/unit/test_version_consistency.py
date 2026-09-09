@@ -59,3 +59,7 @@ def test_console_commands_do_not_collide_on_case_insensitive_filesystems() -> No
     commands = re.findall(r"^([A-Za-z_][A-Za-z_0-9-]*)\s*=", section, re.MULTILINE)
     assert "circleseeker" in commands
     assert len({name.casefold() for name in commands}) == len(commands)
+    recipe = (root / "conda-recipe/meta.yaml").read_text(encoding="utf-8")
+    recipe_commands = re.findall(r"^\s+-\s+([A-Za-z_][A-Za-z_0-9-]*)\s*=", recipe, re.MULTILINE)
+    assert set(recipe_commands) == set(commands)
+    assert len({name.casefold() for name in recipe_commands}) == len(recipe_commands)
