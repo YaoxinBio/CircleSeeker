@@ -908,3 +908,126 @@ class TestBaseEccProcessorLoadCsvFiles:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRepeatedKeyLookupsAreIndexed:
+    """Per-key lookups must not rescan query_id / cluster_id for every key.
+
+    Both MeccProcessor and CeccProcessor ran
+    `for key in df[col].unique(): mask = df[col] == key`, i.e. one full scan of
+    an object column per distinct key.  GlioSarc_P01_Tumor carries 1,109,705
+    clusters through this step, which measured 2.12 hours.  Iteration order is
+    load-bearing here - it decides the M#/C# numbering - so the loops keep
+    iterating `unique()` and only the mask construction is indexed.
+    """
+
+    class _Tally(str):
+        calls = 0
+
+        def __eq__(self, other):
+            type(self).calls += 1
+            return str.__eq__(self, other)
+
+        def __hash__(self):
+            return str.__hash__(self)
+
+    class _Library:
+        def __init__(self, mapping):
+            self._mapping = mapping
+
+        def find_sequence(self, query_id):
+            return self._mapping.get(str(query_id))
+
+    @classmethod
+    def _mecc_frame(cls, id_factory, queries=6, rows_per_query=3):
+        records = []
+        for index in range(queries):
+            for row in range(rows_per_query):
+                records.append(
+                    {
+                        "query_id": id_factory(f"q{index}"),
+                        "cluster_id": index % 3,
+                        "q_start": 1,
+                        "length": 8,
+                        "eSeq": "",
+                    }
+                )
+        return pd.DataFrame(records)
+
+    def test_mecc_sequence_extraction_does_not_rescan(self):
+        frame = self._mecc_frame(self._Tally)
+        library = self._Library({f"q{i}": "ACGTACGTACGTACGT" for i in range(6)})
+        processor = MeccProcessor(library, UMCProcessConfig())
+
+        type(self)._Tally.calls = 0
+        processor.compute_sequences(frame)
+
+        assert self._Tally.calls <= len(frame), (
+            f"query_id compared {self._Tally.calls} times for {len(frame)} rows"
+        )
+
+    def test_mecc_numbering_does_not_rescan(self):
+        frame = self._mecc_frame(self._Tally)
+        frame["eSeq"] = "ACGTACGT"
+        library = self._Library({})
+        processor = MeccProcessor(library, UMCProcessConfig())
+
+        type(self)._Tally.calls = 0
+        processor.add_numbering_and_export(frame)
+
+        assert self._Tally.calls <= len(frame), (
+            f"query_id compared {self._Tally.calls} times for {len(frame)} rows"
+        )
+
+    def test_mecc_numbering_order_and_assignment(self):
+        frame = self._mecc_frame(str, queries=6, rows_per_query=2)
+        # clusters 1 and 2 group two queries each; cluster 0 stays unclustered.
+        frame["eSeq"] = ["S" + str(i // 2) for i in range(len(frame))]
+        library = self._Library({})
+        processor = MeccProcessor(library, UMCProcessConfig())
+
+        result = processor.add_numbering_and_export(frame)
+
+        # One id per cluster, then one id per unclustered query, in first-seen order.
+        assigned = result[["query_id", "cluster_id", "eccDNA_id"]].drop_duplicates()
+        clustered = assigned[assigned["cluster_id"] > 0]
+        for cluster_id, group in clustered.groupby("cluster_id"):
+            assert group["eccDNA_id"].nunique() == 1, cluster_id
+        unclustered = assigned[assigned["cluster_id"] == 0]
+        assert unclustered["eccDNA_id"].nunique() == len(unclustered)
+        assert all(str(v).startswith("M") for v in assigned["eccDNA_id"])
+        assert [record.id for record in processor.fasta_records] == sorted(
+            {v for v in assigned["eccDNA_id"]}, key=lambda s: int(s[1:])
+        )
+
+    def test_cecc_numbering_does_not_rescan(self):
+        frame = self._mecc_frame(self._Tally)
+        frame["eSeq"] = "ACGTACGT"
+        frame["num_segments"] = 2
+        library = self._Library({})
+        processor = CeccProcessor(library, UMCProcessConfig())
+
+        type(self)._Tally.calls = 0
+        processor.add_numbering_and_export(frame)
+
+        assert self._Tally.calls <= len(frame), (
+            f"query_id compared {self._Tally.calls} times for {len(frame)} rows"
+        )
+
+    def test_unclustered_rows_keep_their_own_ids(self):
+        frame = pd.DataFrame(
+            [
+                {"query_id": "qA", "cluster_id": 0, "eSeq": "AAAA"},
+                {"query_id": "qB", "cluster_id": 0, "eSeq": "CCCC"},
+                {"query_id": "qA", "cluster_id": 0, "eSeq": "AAAA"},
+                {"query_id": "qC", "cluster_id": 5, "eSeq": "GGGG"},
+            ]
+        )
+        processor = MeccProcessor(self._Library({}), UMCProcessConfig())
+
+        result = processor.add_numbering_and_export(frame)
+
+        ids = dict(zip(result["query_id"], result["eccDNA_id"]))
+        assert ids["qC"] != ids["qA"] != ids["qB"]
+        # Both rows of qA share one id.
+        assert result[result["query_id"] == "qA"]["eccDNA_id"].nunique() == 1

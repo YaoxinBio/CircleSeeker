@@ -86,6 +86,32 @@ class BaseEccProcessor(ABC):
         self.fasta_records: list[SeqRecord] = []
         self.counter = 0
 
+    @staticmethod
+    def _positions_by_value(frame: pd.DataFrame, column: str) -> dict:
+        """Map each distinct value to its row positions in a single pass.
+
+        Replaces `frame[frame[column] == value]` inside a loop, which rescanned
+        the whole column once per key: GlioSarc_P01_Tumor carries 1,109,705
+        clusters through this step.  groupby().indices keeps each group's rows
+        in table order, so a lookup selects the same rows in the same order as
+        the boolean mask did.
+        """
+        if frame.empty or column not in frame.columns:
+            return {}
+        positions: dict[Any, Any] = frame.groupby(column, sort=False).indices
+        return positions
+
+    @staticmethod
+    def _mask_from_positions(frame: pd.DataFrame, positions: Any) -> pd.Series:
+        """Boolean mask over `frame` selecting exactly `positions`.
+
+        Kept as a mask so the surrounding `.loc[mask, col] = value` assignments
+        retain their dtype behaviour.
+        """
+        selected: Any = np.zeros(len(frame), dtype=bool)
+        selected[positions] = True
+        return pd.Series(selected, index=frame.index)
+
     @abstractmethod
     def get_eccDNA_prefix(self) -> str:
         """Return the prefix for this eccDNA type (U, M, or C)."""
@@ -686,9 +712,11 @@ class MeccProcessor(BaseEccProcessor):
         sequences_missing = 0
 
         # Process each unique query_id (use first row for each)
+        query_positions = self._positions_by_value(df, "query_id")
         for query_id in df["query_id"].unique():
-            query_mask = df["query_id"] == query_id
-            first_idx = df[query_mask].index[0]
+            positions = query_positions[query_id]
+            query_mask = self._mask_from_positions(df, positions)
+            first_idx = df.index[positions[0]]
 
             q_start = df.loc[first_idx, "q_start"]
             cons_len = df.loc[first_idx, "length"]
@@ -721,12 +749,14 @@ class MeccProcessor(BaseEccProcessor):
         if "cluster_id" in df.columns and df["cluster_id"].max() > 0:
             processed_clusters = set()
 
+            cluster_positions = self._positions_by_value(df, "cluster_id")
             for cluster_id in df[df["cluster_id"] > 0]["cluster_id"].unique():
                 if cluster_id in processed_clusters:
                     continue
 
-                cluster_mask = df["cluster_id"] == cluster_id
-                cluster_df = df[cluster_mask]
+                positions = cluster_positions[cluster_id]
+                cluster_mask = self._mask_from_positions(df, positions)
+                cluster_df = df.take(positions)
 
                 first_idx = cluster_df.index[0]
                 seq = cluster_df.loc[first_idx, "eSeq"]
@@ -747,9 +777,14 @@ class MeccProcessor(BaseEccProcessor):
             # Handle unclustered
             unclustered_mask = df["cluster_id"] == 0
             if unclustered_mask.any():
+                unclustered_positions = np.flatnonzero(unclustered_mask.to_numpy())
+                within = self._positions_by_value(
+                    df.take(unclustered_positions), "query_id"
+                )
                 for query_id in df[unclustered_mask]["query_id"].unique():
-                    query_mask = (df["query_id"] == query_id) & unclustered_mask
-                    first_idx = df[query_mask].index[0]
+                    positions = unclustered_positions[within[query_id]]
+                    query_mask = self._mask_from_positions(df, positions)
+                    first_idx = df.index[positions[0]]
                     seq = df.loc[first_idx, "eSeq"]
 
                     if seq and len(seq) > 0:
@@ -992,9 +1027,11 @@ class CeccProcessor(BaseEccProcessor):
         sequences_found = 0
         sequences_missing = 0
 
+        query_positions = self._positions_by_value(df, "query_id")
         for query_id in df["query_id"].unique():
-            query_mask = df["query_id"] == query_id
-            first_idx = df[query_mask].index[0]
+            positions = query_positions[query_id]
+            query_mask = self._mask_from_positions(df, positions)
+            first_idx = df.index[positions[0]]
 
             q_start = df.loc[first_idx, "q_start"]
             cons_len = df.loc[first_idx, "length"]
@@ -1040,12 +1077,14 @@ class CeccProcessor(BaseEccProcessor):
         if "cluster_id" in df.columns and df["cluster_id"].max() > 0:
             processed_clusters = set()
 
+            cluster_positions = self._positions_by_value(df, "cluster_id")
             for cluster_id in df[df["cluster_id"] > 0]["cluster_id"].unique():
                 if cluster_id in processed_clusters:
                     continue
 
-                cluster_mask = df["cluster_id"] == cluster_id
-                cluster_df = df[cluster_mask]
+                positions = cluster_positions[cluster_id]
+                cluster_mask = self._mask_from_positions(df, positions)
+                cluster_df = df.take(positions)
 
                 first_idx = cluster_df.index[0]
                 seq = cluster_df.loc[first_idx, "eSeq"]
@@ -1075,9 +1114,14 @@ class CeccProcessor(BaseEccProcessor):
             # Handle unclustered
             unclustered_mask = df["cluster_id"] == 0
             if unclustered_mask.any():
+                unclustered_positions = np.flatnonzero(unclustered_mask.to_numpy())
+                within = self._positions_by_value(
+                    df.take(unclustered_positions), "query_id"
+                )
                 for query_id in df[unclustered_mask]["query_id"].unique():
-                    query_mask = (df["query_id"] == query_id) & unclustered_mask
-                    first_idx = df[query_mask].index[0]
+                    positions = unclustered_positions[within[query_id]]
+                    query_mask = self._mask_from_positions(df, positions)
+                    first_idx = df.index[positions[0]]
                     seq = df.loc[first_idx, "eSeq"]
                     num_segments = df.loc[first_idx].get("num_segments", 0)
 
