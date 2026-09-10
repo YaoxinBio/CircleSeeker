@@ -10,6 +10,7 @@ tracked in the pipeline as CtcR-* read classes for backward compatibility.
 """
 
 import json
+import re
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -144,6 +145,107 @@ class EccSummary:
     # ------------------------------------------------------------------
     # Compatibility wrappers for legacy pipeline interface
     # ------------------------------------------------------------------
+    def _scan_fasta_by_line(self, path: Path) -> tuple[int, int]:
+        """Reference scan: walk the file line by line.
+
+        Kept as the definition of the statistics and as the fallback for inputs
+        the block scanner declines.
+        """
+        total_sequences = 0
+        total_length = 0
+        current_len = 0
+
+        with open(path, "r") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(">"):
+                    if current_len:
+                        total_length += current_len
+                        current_len = 0
+                    total_sequences += 1
+                else:
+                    current_len += len(line)
+            total_length += current_len
+
+        return total_sequences, total_length
+
+    def _scan_fasta_in_blocks(
+        self, path: Path, block_size: int = 8 << 20
+    ) -> Optional[tuple[int, int]]:
+        """Count sequences and bases with block-level byte operations.
+
+        The line-by-line scan spends the entire cost in the interpreter: three
+        numbers off a 76 GB input measured 797 sequences/s and 14.4 MB/s, well
+        under what the storage delivers.  Here `bytes.count` does the counting
+        in C and only the headers are visited from Python.
+
+        Returns None - and leaves the caller on the reference path - for any
+        input where plain byte arithmetic would not reproduce `str.strip()`
+        semantics: carriage returns, blank lines, or leading/trailing blanks.
+        """
+        header_re = re.compile(rb">[^\n]*")
+        total_bytes = 0
+        newlines = 0
+        sequences = 0
+        header_bytes = 0
+        tail = b""
+        at_file_start = True
+
+        with open(path, "rb") as handle:
+            while True:
+                block = handle.read(block_size)
+                if not block:
+                    break
+                total_bytes += len(block)
+                data = tail + block
+                cut = data.rfind(b"\n")
+                if cut == -1:
+                    tail = data
+                    continue
+                body, tail = data[: cut + 1], data[cut + 1 :]
+
+                # A virtual newline in front lets the first line be treated like
+                # any other, and carries the previous block's line break across
+                # the boundary so patterns spanning it are still seen.
+                scan = b"\n" + body
+                if (
+                    b"\r" in scan
+                    or b"\n\n" in scan
+                    or b"\n " in scan
+                    or b"\n\t" in scan
+                    or b" \n" in scan
+                    or b"\t\n" in scan
+                ):
+                    return None
+
+                newlines += body.count(b"\n")
+                sequences += scan.count(b"\n>")
+                for match in header_re.finditer(scan):
+                    if scan[match.start() - 1 : match.start()] == b"\n":
+                        header_bytes += match.end() - match.start()
+                at_file_start = False
+
+        if tail:
+            if (
+                b"\r" in tail
+                or tail[:1] in (b" ", b"\t")
+                or tail[-1:] in (b" ", b"\t")
+            ):
+                return None
+            # The tail is a final line with no newline; it starts a line because
+            # everything before it was consumed up to and including a newline.
+            if tail[:1] == b">":
+                sequences += 1
+                header_bytes += len(tail)
+
+        if at_file_start and not tail and total_bytes:
+            # Nothing was consumable as lines; let the reference path decide.
+            return None
+
+        return sequences, total_bytes - newlines - header_bytes
+
     def process_fasta(self, fasta_path: Union[Path, str]) -> dict:
         """Legacy wrapper to record FASTA statistics."""
         path = Path(fasta_path)
@@ -151,22 +253,12 @@ class EccSummary:
 
         total_sequences = 0
         total_length = 0
-        current_len = 0
 
         try:
-            with open(path, "r") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith(">"):
-                        if current_len:
-                            total_length += current_len
-                            current_len = 0
-                        total_sequences += 1
-                    else:
-                        current_len += len(line)
-                total_length += current_len
+            counted = self._scan_fasta_in_blocks(path)
+            if counted is None:
+                counted = self._scan_fasta_by_line(path)
+            total_sequences, total_length = counted
         except FileNotFoundError:
             self.logger.warning(f"FASTA file not found: {path}")
         except (OSError, UnicodeDecodeError) as exc:

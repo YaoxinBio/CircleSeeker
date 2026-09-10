@@ -883,3 +883,114 @@ class TestProcessAll:
         html_content, text_content = result
         assert "missing_test" in html_content
         assert "missing_test" in text_content
+
+
+class TestFastaStatsAreCountedInBlocks:
+    """FASTA statistics must not walk a multi-gigabyte input line by line.
+
+    `process_fasta` computes three numbers - sequence count, total base count
+    and their mean - and read the raw input with a Python `for line in handle`
+    loop to do it.  On GlioSarc_P01_Tumor that input is 76 GB on shared
+    storage: measured 797 sequences/s and 14.4 MB/s, i.e. ~88 minutes of
+    interpreter overhead, far below what the storage delivers.  Counting on
+    bytes in blocks keeps the work in C.  The line-by-line routine is kept as
+    the reference path and as the fallback for inputs the block scanner
+    declines, so both must always agree.
+    """
+
+    from circleseeker.modules.ecc_summary import EccSummary as _EccSummary
+
+    @staticmethod
+    def _summary(tmp_path):
+        from circleseeker.modules.ecc_summary import EccSummary
+
+        return EccSummary(sample_name="t", output_dir=tmp_path)
+
+    CASES = {
+        "plain": ">a\nACGT\nACGT\n>b\nTTTT\n",
+        "multi_line_sequence": ">a\n" + "ACGTACGTAC\n" * 6 + ">b\nTT\n",
+        "no_trailing_newline": ">a\nACGT\n>b\nTTTT",
+        "blank_lines": ">a\n\nACGT\n\n>b\nTTTT\n",
+        "crlf": ">a\r\nACGT\r\n>b\r\nTTTT\r\n",
+        "leading_space_header": ">a\nACGT\n  >b\nTTTT\n",
+        "trailing_space_sequence": ">a\nACGT  \n>b\nTTTT\n",
+        "header_only": ">a\n>b\n>c\n",
+        "empty": "",
+        "sequence_before_first_header": "ACGT\n>a\nTTTT\n",
+    }
+
+    @pytest.mark.parametrize("name", sorted(CASES))
+    def test_block_scan_matches_the_line_scan(self, tmp_path, name):
+        fasta = tmp_path / f"{name}.fasta"
+        fasta.write_text(self.CASES[name], newline="")
+        summary = self._summary(tmp_path)
+
+        by_line = summary._scan_fasta_by_line(fasta)
+        in_blocks = summary._scan_fasta_in_blocks(fasta)
+
+        if in_blocks is None:
+            pytest.skip("block scanner declined this input; fallback covers it")
+        assert in_blocks == by_line, name
+
+    def test_declined_input_still_reports_via_fallback(self, tmp_path):
+        fasta = tmp_path / "crlf.fasta"
+        fasta.write_text(self.CASES["crlf"], newline="")
+        summary = self._summary(tmp_path)
+
+        stats = summary.process_fasta(fasta)
+
+        assert stats["total_sequences"] == 2
+        assert stats["total_length"] == 8
+
+    def test_block_scan_spans_chunk_boundaries(self, tmp_path):
+        # Records deliberately longer than the scan block, so headers and
+        # sequences straddle boundaries in both directions.
+        records = "".join(f">seq{i}\n" + "ACGT" * 900 + "\n" for i in range(40))
+        fasta = tmp_path / "big.fasta"
+        fasta.write_text(records, newline="")
+        summary = self._summary(tmp_path)
+
+        assert summary._scan_fasta_in_blocks(fasta, block_size=1024) == summary._scan_fasta_by_line(fasta)
+
+    def test_process_fasta_does_not_iterate_lines(self, tmp_path):
+        import builtins
+
+        fasta = tmp_path / "many.fasta"
+        fasta.write_text("".join(f">s{i}\nACGTACGTAC\n" for i in range(500)), newline="")
+
+        counter = {"lines": 0}
+        real_open = builtins.open
+
+        class _CountingHandle:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def __iter__(self):
+                for line in self._handle:
+                    counter["lines"] += 1
+                    yield line
+
+            def __enter__(self):
+                self._handle.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._handle.__exit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._handle, name)
+
+        def counting_open(*args, **kwargs):
+            return _CountingHandle(real_open(*args, **kwargs))
+
+        summary = self._summary(tmp_path)
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(builtins, "open", counting_open)
+        try:
+            stats = summary.process_fasta(fasta)
+        finally:
+            monkey.undo()
+
+        assert stats["total_sequences"] == 500
+        assert stats["total_length"] == 5000
+        assert counter["lines"] == 0, f"walked {counter['lines']} lines"
