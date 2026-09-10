@@ -606,3 +606,59 @@ class TestFastaIsWrittenAtomically:
 
         assert out.read_text() == ">r1|circular\nACGTACGT\n"
         assert list(tmp_path.glob("*.partial")) == []
+
+
+class TestOverlapResolutionIsDeterministic:
+    """Picking a representative from an overlap group must not depend on hashing.
+
+    `component_df = group_df.loc[list(component)]` turned a set into a list, and
+    `idxmax()` returns the FIRST maximum in that order. When two overlapping
+    alignments have equal coverage the winner was therefore whichever the set
+    happened to yield first, i.e. hash-seed dependent - the same class of bug as
+    the subgraph node order in splitreads_core.
+    """
+
+    @staticmethod
+    def _module(tmp_path):
+        return TandemToRing(tmp_path / "in.txt", tmp_path / "out.csv", tmp_path / "out.fasta")
+
+    @staticmethod
+    def _tied_group():
+        # three alignments; the first two overlap heavily and tie on coverage
+        return pd.DataFrame(
+            {
+                ColumnStandard.READS: ["r1", "r1", "r1"],
+                ColumnStandard.CHR: ["chr1", "chr1", "chr1"],
+                ColumnStandard.START0: [1000, 1010, 50000],
+                ColumnStandard.END0: [2000, 2010, 51000],
+                "consLen": [1000, 1000, 1000],
+                "copyNum": [2.0, 2.0, 2.0],
+                "Effective_Length": [100, 100, 100],
+            },
+            index=[7, 3, 11],
+        )
+
+    def test_tied_coverage_picks_the_lowest_position(self, tmp_path):
+        module = self._module(tmp_path)
+        result = module.process_complex_group_with_graph_optimized(self._tied_group())
+
+        # the group is reset_index'd inside, so positions 0/1 are the tied pair
+        # and 2 is the isolated alignment
+        kept = sorted(result.index)
+        assert kept == [0, 2], kept
+
+    def test_repeated_calls_agree(self, tmp_path):
+        module = self._module(tmp_path)
+        first = module.process_complex_group_with_graph_optimized(self._tied_group())
+        second = module.process_complex_group_with_graph_optimized(self._tied_group())
+
+        assert list(first.index) == list(second.index)
+
+    def test_untied_group_still_keeps_the_longest(self, tmp_path):
+        group = self._tied_group()
+        group.loc[3, ColumnStandard.END0] = 4000     # the second row is now longest
+        module = self._module(tmp_path)
+
+        result = module.process_complex_group_with_graph_optimized(group)
+
+        assert sorted(result.index) == [1, 2], sorted(result.index)
