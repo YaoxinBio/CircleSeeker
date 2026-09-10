@@ -14,8 +14,9 @@ repository continues that version sequence; it does not redefine those versions.
 |---|---|
 | v1.5.1 / `87ae7f09c11a4795532a7524db1958c0c11a5b2d` | Historical analysis baseline |
 | `055110f531a9e08936f8c526da5c71950a6bbcee` | Rejected preliminary repair; its dataset batch and prior release draft are obsolete |
-| `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repaired source used by the current full-input dataset rebuild |
-| v1.5.2 preparation | Same algorithm source as `44c79b8`; updated version, packaging and documentation; formal publication pending |
+| `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repair used for 59 completed runs and the first eight GS steps |
+| `1.5.1+ceccfix.20260908` / `a662ad74e1cf984af0417017a36572e3a725c934` | Performance-only support aggregation change; GS resumes at step 9 from its completed CD-HIT checkpoint |
+| v1.5.2 preparation | Same implementation source as `a662ad7`; updated version, packaging and documentation; formal publication pending |
 
 The release comparison excludes only `src/circleseeker/__version__.py` when
 checking algorithm-source equality. Rebuilding with the repair commit is not
@@ -34,6 +35,13 @@ preserving their original identities. Historical PR heads and the
 ONT development branch are retained as archival branches, not merged into the
 release implementation. GitHub issues, review conversations and release asset
 metadata are platform records and are not automatically recreated by Git copying.
+
+The `a662ad7` performance commit is also merged with its original identity.
+It changes only `ecc_dedup.py` in the computational implementation. The 59
+completed runs are not retroactively relabelled as executions of this commit;
+the GS run records separate upstream and downstream commits. Equivalence and
+million-cluster timing checks are described in
+[the performance report](docs/development/dedup-support-performance.md).
 
 The distinct CircleSeeker-dev v2.1.3 development line is not the baseline for this
 release or the dataset rebuild.

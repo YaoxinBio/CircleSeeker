@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-SOURCE_COMMIT = "44c79b8eafdb1f60f949d69c9eeab12a69ce570b"
+SOURCE_COMMIT = "a662ad74e1cf984af0417017a36572e3a725c934"
 REPOSITORY = "https://github.com/YaoxinBio/CircleSeeker"
 
 

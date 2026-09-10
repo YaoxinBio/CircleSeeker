@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.5.2] - Unreleased
 
 ### Fixed
+- Remove per-cluster full-table scans from support aggregation, preserving candidate/RCA accounting and adding progress logging for large datasets.
 - Keep repeat-candidate identity, representative sequence, length and RCA support linked.
 - Preserve directed circular segment order through classification and structural deduplication.
 - Retain baseline CD-HIT clusters and structural grouping without the preliminary repair's over-splitting.
