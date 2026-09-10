@@ -559,6 +559,48 @@ class UMeccClassifier:
         covered = cls._union_len(segments)
         return float(covered) / float(L) if L > 0 else 0.0
 
+    @classmethod
+    def _coverage_fraction_from_arrays(
+        cls, q_start_vals: Any, q_end_vals: Any, cons_len: int, style: str
+    ) -> float:
+        """Ring coverage from two arrays, without slicing a frame first.
+
+        Same computation as _coverage_fraction_for_alignments, which reads only
+        these two columns; taking a `group.loc[idxs]` slice materialised every
+        column of the group for each locus.
+        """
+        L = int(cons_len)
+        if L <= 0 or len(q_start_vals) == 0:
+            return 0.0
+        segments: list[tuple[int, int]] = []
+        for q_start, q_end in zip(q_start_vals, q_end_vals):
+            if pd.isna(q_start) or pd.isna(q_end):
+                continue
+            segments.extend(cls._project_query_interval_to_ring(q_start, q_end, L, style))
+        covered = cls._union_len(segments)
+        return float(covered) / float(L) if L > 0 else 0.0
+
+    @staticmethod
+    def _locus_evidence_from_arrays(
+        mapq_vals: Any, identity_vals: Any
+    ) -> tuple[int, int, float, float]:
+        """MAPQ and identity extremes for one locus, straight off the columns."""
+        if len(mapq_vals) == 0:
+            return 0, 0, 0.0, 0.0
+        try:
+            mapq_best = int(np.nanmax(mapq_vals))
+            mapq_min = int(np.nanmin(mapq_vals))
+        except (TypeError, ValueError):
+            mapq_best = 0
+            mapq_min = 0
+        try:
+            id_best = float(np.nanmax(identity_vals))
+            id_min = float(np.nanmin(identity_vals))
+        except (TypeError, ValueError):
+            id_best = 0.0
+            id_min = 0.0
+        return mapq_best, mapq_min, id_best, id_min
+
     def _cluster_loci(self, group: pd.DataFrame) -> dict[int, list[int]]:
         """Cluster alignments into loci for a single query."""
         if group.empty:
@@ -829,12 +871,29 @@ class UMeccClassifier:
             if not loci:
                 continue
 
+            # Pull the four columns the per-locus work reads, once per query, and
+            # address loci by position from here on. `group.loc[idxs]` used to
+            # materialise every column of the group for each locus, twice over
+            # (coverage, then evidence).
+            position_of = {label: i for i, label in enumerate(group.index)}
+            q_start_all = group["q_start"].to_numpy() if "q_start" in group.columns else None
+            q_end_all = group["q_end"].to_numpy() if "q_end" in group.columns else None
+            mapq_all = group["mapq"].to_numpy() if "mapq" in group.columns else None
+            identity_all = group["identity"].to_numpy() if "identity" in group.columns else None
+            locus_positions = {
+                lid: [position_of[label] for label in idxs if label in position_of]
+                for lid, idxs in loci.items()
+            }
+
             locus_cov: dict[int, float] = {}
             for locus_id, idxs in loci.items():
-                locus_df = group.loc[idxs]
-                locus_cov[locus_id] = self._coverage_fraction_for_alignments(
-                    locus_df, cons_len, q_style
-                )
+                positions = locus_positions[locus_id]
+                if q_start_all is None or q_end_all is None:
+                    locus_cov[locus_id] = 0.0
+                else:
+                    locus_cov[locus_id] = self._coverage_fraction_from_arrays(
+                        q_start_all[positions], q_end_all[positions], cons_len, q_style
+                    )
 
             cov_sorted = sorted(locus_cov.items(), key=lambda kv: kv[1], reverse=True)
             u_cov = cov_sorted[0][1] if cov_sorted else 0.0
@@ -845,28 +904,15 @@ class UMeccClassifier:
             def locus_evidence(lid: Optional[int]) -> tuple[int, int, float, float]:
                 if lid is None:
                     return 0, 0, 0.0, 0.0
-                idxs = loci.get(lid)
-                if not idxs:
+                positions = locus_positions.get(lid)
+                if not positions:
                     return 0, 0, 0.0, 0.0
-                locus_df_local = group.loc[idxs]
-                if locus_df_local.empty:
+                if mapq_all is None or identity_all is None:
                     return 0, 0, 0.0, 0.0
                 # Columns were normalized to numeric in `_preprocess_alignment_df`.
-                try:
-                    mapq_best_local = int(locus_df_local["mapq"].max())
-                    mapq_min_local = int(locus_df_local["mapq"].min())
-                except (TypeError, ValueError):
-                    mapq_best_local = 0
-                    mapq_min_local = 0
-
-                try:
-                    id_best_local = float(locus_df_local["identity"].max())
-                    id_min_local = float(locus_df_local["identity"].min())
-                except (TypeError, ValueError):
-                    id_best_local = 0.0
-                    id_min_local = 0.0
-
-                return int(mapq_best_local), int(mapq_min_local), float(id_best_local), float(id_min_local)
+                return self._locus_evidence_from_arrays(
+                    mapq_all[positions], identity_all[positions]
+                )
 
             full_loci = [lid for lid, cov in locus_cov.items() if cov >= theta_m]
             m_count = len(full_loci)

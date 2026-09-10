@@ -853,3 +853,75 @@ class TestPerQueryAlignmentLookup:
         )
         positions = UMeccClassifier._positions_by_query(self._frame())
         assert set(positions) == {"q1", "q2", "q3"}
+
+
+class TestPerLocusWorkAvoidsFrameSlices:
+    """Per-locus work must not slice a whole DataFrame.
+
+    classify_uecc_mecc did `group.loc[idxs]` once per locus for coverage, and
+    again inside locus_evidence. Each slice materialises all 11+ columns while
+    the callers read only q_start/q_end, or mapq/identity. cProfile on a real
+    2% subset attributed 3,961,886 calls to pandas' _take_nd_ndarray and as
+    many to maybe_promote, with frame.__getitem__ at 22% cumulative.
+    """
+
+    @staticmethod
+    def _group():
+        return pd.DataFrame(
+            {
+                "q_start": [0, 100, 250, 400],
+                "q_end": [120, 260, 410, 500],
+                "mapq": [60, 55, 30, 60],
+                "identity": [99.5, 98.0, 95.0, 99.9],
+            },
+            index=[11, 12, 13, 14],
+        )
+
+    def test_coverage_from_arrays_matches_the_frame_version(self):
+        clf = UMeccClassifier()
+        group = self._group()
+        positions = [0, 2, 3]
+        idxs = [group.index[p] for p in positions]
+
+        from_frame = clf._coverage_fraction_for_alignments(group.loc[idxs], 500, "0-based")
+        from_arrays = clf._coverage_fraction_from_arrays(
+            group["q_start"].to_numpy()[positions],
+            group["q_end"].to_numpy()[positions],
+            500,
+            "0-based",
+        )
+        assert from_arrays == from_frame
+
+    def test_coverage_handles_empty_and_nan(self):
+        import numpy as np
+
+        clf = UMeccClassifier()
+        assert clf._coverage_fraction_from_arrays(np.array([]), np.array([]), 500, "0-based") == 0.0
+        starts = np.array([0.0, float("nan"), 200.0])
+        ends = np.array([100.0, 150.0, float("nan")])
+        frame = pd.DataFrame({"q_start": starts, "q_end": ends})
+        assert clf._coverage_fraction_from_arrays(starts, ends, 500, "0-based") == (
+            clf._coverage_fraction_for_alignments(frame, 500, "0-based")
+        )
+
+    def test_locus_evidence_from_arrays_matches_the_frame_version(self):
+        clf = UMeccClassifier()
+        group = self._group()
+        positions = [1, 2]
+        idxs = [group.index[p] for p in positions]
+        sliced = group.loc[idxs]
+
+        expected = (
+            int(sliced["mapq"].max()), int(sliced["mapq"].min()),
+            float(sliced["identity"].max()), float(sliced["identity"].min()),
+        )
+        got = clf._locus_evidence_from_arrays(
+            group["mapq"].to_numpy()[positions], group["identity"].to_numpy()[positions]
+        )
+        assert got == expected
+
+    def test_locus_evidence_on_empty_positions(self):
+        import numpy as np
+
+        clf = UMeccClassifier()
+        assert clf._locus_evidence_from_arrays(np.array([]), np.array([])) == (0, 0, 0.0, 0.0)
