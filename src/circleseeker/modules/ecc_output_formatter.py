@@ -629,6 +629,7 @@ def generate_fasta_files(
     output_dir: Path,
     summary_df: pd.DataFrame,
     prefix: str = "",
+    validated: bool = False,
 ) -> None:
     """Generate FASTA files for all eccDNA and by type.
 
@@ -640,13 +641,18 @@ def generate_fasta_files(
         output_dir: Output directory
         summary_df: Summary DataFrame to determine types
         prefix: Sample prefix for output filenames
+        validated: True when the caller has already run
+            validate_confirmed_cecc_sequences on these same inputs. The check
+            has no side effects beyond raising, so a second pass over the same
+            sequences can only reach the same conclusion.
     """
     logger = get_logger("ecc_output_formatter")
 
     # Map short type names to full directory names
     _TYPE_TO_DIR = {"Uecc": "UeccDNA", "Mecc": "MeccDNA", "Cecc": "CeccDNA"}
 
-    validate_confirmed_cecc_sequences(sequences, summary_df)
+    if not validated:
+        validate_confirmed_cecc_sequences(sequences, summary_df)
 
     # Create type subdirectories
     for dir_name in _TYPE_TO_DIR.values():
@@ -826,7 +832,7 @@ def format_output(
     generate_cecc_bedpe(regions_df, output_dir / "CeccDNA" / "cecc_junctions.bedpe")
 
     # Generate FASTA files
-    generate_fasta_files(sequences, output_dir, summary_df)
+    generate_fasta_files(sequences, output_dir, summary_df, validated=True)
 
     logger.info(f"Output files generated in {output_dir}")
 

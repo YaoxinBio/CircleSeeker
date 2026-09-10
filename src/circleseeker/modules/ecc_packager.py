@@ -360,7 +360,7 @@ def run(args: argparse.Namespace) -> int:
     generate_cecc_bedpe(regions_df, out_dir / "CeccDNA" / f"{sample}_cecc_junctions.bedpe")
 
     # Generate FASTA files
-    generate_fasta_files(sequences, out_dir, summary_df, prefix=sample)
+    generate_fasta_files(sequences, out_dir, summary_df, prefix=sample, validated=True)
 
     # Copy report files
     if html_in:

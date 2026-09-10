@@ -1073,3 +1073,55 @@ class TestFastaIsScannedOnce:
 
         assert stats["total_reads"] == 1
         assert stats["total_length"] == 8
+
+
+class TestDeclinedScanIsNotRepeated:
+    """A declined block scan must be remembered too.
+
+    _scan_fasta_in_blocks only cached its successful result, so an input it
+    declines (carriage returns, blank lines, blanks around a newline) was
+    re-read in full by every caller before falling back.  On a 76 GB input that
+    turns one 13-20 minute scan into two, on top of the line-by-line fallbacks.
+    """
+
+    @staticmethod
+    def _summary(tmp_path):
+        from circleseeker.modules.ecc_summary import EccSummary
+
+        return EccSummary(sample_name="t", output_dir=tmp_path)
+
+    def test_declined_result_is_cached(self, tmp_path):
+        fasta = tmp_path / "crlf.fasta"
+        fasta.write_text(">a\r\nACGT\r\n>b\r\nTTTT\r\n", newline="")
+        summary = self._summary(tmp_path)
+
+        assert summary._scan_fasta_in_blocks(fasta) is None
+
+        opened = {"count": 0}
+        import builtins
+
+        real_open = builtins.open
+
+        def counting_open(file, *args, **kwargs):
+            if str(file) == str(fasta):
+                opened["count"] += 1
+            return real_open(file, *args, **kwargs)
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(builtins, "open", counting_open)
+        try:
+            assert summary._scan_fasta_in_blocks(fasta) is None
+        finally:
+            monkey.undo()
+
+        assert opened["count"] == 0, f"re-read a declined file {opened['count']} times"
+
+    def test_a_changed_file_is_rescanned(self, tmp_path):
+        fasta = tmp_path / "f.fasta"
+        fasta.write_text(">a\r\nACGT\r\n", newline="")
+        summary = self._summary(tmp_path)
+        assert summary._scan_fasta_in_blocks(fasta) is None
+
+        # Same path, different content: the size/mtime key must miss.
+        fasta.write_text(">a\nACGT\n>b\nTTTT\n", newline="")
+        assert summary._scan_fasta_in_blocks(fasta) == (2, 8)

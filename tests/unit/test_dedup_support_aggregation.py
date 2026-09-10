@@ -85,3 +85,59 @@ def test_empty_support_does_not_invent_a_copy_total():
     assert fixed.candidate_support.tolist() == ["{}"]
     assert fixed.per_read_copy_number.tolist() == [""]
     assert "copy_number" not in fixed and "repeat_number" not in fixed
+
+
+class TestSupportCollectionAvoidsIterrows:
+    """collect_support must not build a Series per row.
+
+    support_fields is called once per cluster from ecc_dedup and once per
+    location signature from umc_process - about 1.1 million times each on
+    GlioSarc_P01_Tumor.  iterrows constructs an object Series for every row,
+    which fable measured at 50-100 us before any of the per-row logic runs.
+    Every access in this function is `row.get(...)`, which a dict answers
+    identically.
+    """
+
+    @staticmethod
+    def _mixed_frame():
+        return pd.DataFrame(
+            [
+                dict(reads="a;b", per_read_copy_number="2;3", query_id="q1|circular",
+                     copy_number=5, eccDNA_id="U1"),
+                dict(reads="c", per_read_copy_number=None, query_id=None,
+                     copy_number=float("nan"), eccDNA_id="U2", repeat_number=7),
+                dict(reads="d;d", per_read_copy_number=None, query_id="q3",
+                     copy_number=1.5, eccDNA_id="U3"),
+            ]
+        )
+
+    def test_collect_support_does_not_call_iterrows(self, monkeypatch):
+        from circleseeker.utils.read_support import collect_support
+
+        def boom(self):
+            raise AssertionError("collect_support still walks rows with iterrows")
+
+        monkeypatch.setattr(pd.DataFrame, "iterrows", boom)
+        support = collect_support(self._mixed_frame())
+        assert support  # and it still produced something
+
+    def test_values_survive_mixed_dtypes(self):
+        from circleseeker.utils.read_support import collect_support
+
+        support = collect_support(self._mixed_frame())
+
+        assert support["q1::a"] == {"read": "a", "copy_number": 2.0}
+        assert support["q1::b"] == {"read": "b", "copy_number": 3.0}
+        # single read, no query_id: the key is built from eccDNA_id and read,
+        # and the copy number falls back to repeat_number
+        assert support["U2::c"] == {"read": "c", "copy_number": 7.0}
+        # duplicate read names collapse to one entry
+        assert support["q3"] == {"read": "d", "copy_number": 1.5}
+
+    def test_encoded_candidate_support_still_short_circuits(self):
+        from circleseeker.utils.read_support import collect_support
+
+        df = pd.DataFrame(
+            [dict(candidate_support='{"k1": {"read": "r1", "copy_number": 4}}', reads="ignored")]
+        )
+        assert collect_support(df) == {"k1": {"read": "r1", "copy_number": 4.0}}

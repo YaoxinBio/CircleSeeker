@@ -1575,9 +1575,8 @@ class CeccBuild:
             if len(locus_info) < min_distinct_loci:
                 continue
 
-            # Step 2: Build locus graph
-            G = self._build_locus_graph(alns, aln_to_locus, locus_info)
-
+            # Step 2 (was: build a locus graph) - the result was never read;
+            # _find_cycle_in_doubled_sequence takes alns/aln_to_locus/cons_len.
             # Step 3: Find cycle using doubled sequence property
             cycle_result = self._find_cycle_in_doubled_sequence(
                 alns, aln_to_locus, cons_len

@@ -1031,3 +1031,57 @@ class TestRepeatedKeyLookupsAreIndexed:
         assert ids["qC"] != ids["qA"] != ids["qB"]
         # Both rows of qA share one id.
         assert result[result["query_id"] == "qA"]["eccDNA_id"].nunique() == 1
+
+
+class TestNumberingWritesByPosition:
+    """Per-key writes must not allocate a whole-table mask.
+
+    _mask_from_positions built a boolean array the length of the frame for
+    every distinct query_id / cluster_id, then `.loc[mask, col] = value` walked
+    the full column again. Positional writes select the same rows: `.loc`
+    converts a mask to these very positions internally, dtype promotion
+    included (checked on pandas 2.3.3 for float-into-int and str-into-int).
+    """
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "query_id": ["qA", "qA", "qB"],
+                "cluster_id": [0, 0, 3],
+                "eSeq": ["AAAA", "AAAA", "GGGG"],
+                "note": [["keep"], ["keep2"], ["keep3"]],
+            }
+        )
+
+    def test_untargeted_rows_keep_their_exact_objects(self):
+        frame = self._frame()
+        marker = frame.loc[2, "note"]
+        processor = MeccProcessor(
+            TestRepeatedKeyLookupsAreIndexed._Library({}), UMCProcessConfig()
+        )
+
+        result = processor.add_numbering_and_export(frame)
+
+        assert result.loc[2, "note"] is marker
+        assert result.loc[0, "eccDNA_id"] == result.loc[1, "eccDNA_id"]
+        assert result.loc[2, "eccDNA_id"] != result.loc[0, "eccDNA_id"]
+
+    def test_sequence_write_lands_on_every_row_of_the_query(self):
+        frame = pd.DataFrame(
+            {
+                "query_id": ["qA", "qB", "qA"],
+                "q_start": [1, 1, 1],
+                "length": [4, 4, 4],
+                "eSeq": ["", "", ""],
+            }
+        )
+        library = TestRepeatedKeyLookupsAreIndexed._Library(
+            {"qA": "ACGTACGT", "qB": "TTTTGGGG"}
+        )
+        processor = MeccProcessor(library, UMCProcessConfig())
+
+        result = processor.compute_sequences(frame)
+
+        assert result.loc[0, "eSeq"] == result.loc[2, "eSeq"] != ""
+        assert result.loc[1, "eSeq"] != result.loc[0, "eSeq"]

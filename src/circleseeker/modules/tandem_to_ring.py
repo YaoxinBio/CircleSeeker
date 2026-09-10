@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Iterator, Optional
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -341,11 +341,15 @@ class TandemToRing:
         """Process and classify complex reads"""
         self.logger.info("Classifying complex reads...")
 
-        # Get highly consistent groups with multiple records
-        highly_consistent_multi = consistency_analysis[
-            (consistency_analysis["consistency_type"] == "highly_consistent")
-            & (consistency_analysis["num_regions"] > 1)
-        ]["readName"].tolist()
+        # Get highly consistent groups with multiple records.  This is probed
+        # once per complex read group below, so it has to be a hashed lookup:
+        # as a list both sides grow with the sample and the scan is quadratic.
+        highly_consistent_multi = set(
+            consistency_analysis[
+                (consistency_analysis["consistency_type"] == "highly_consistent")
+                & (consistency_analysis["num_regions"] > 1)
+            ]["readName"]
+        )
 
         processed_results = []
 
@@ -424,25 +428,22 @@ class TandemToRing:
 
         return df_main
 
+    def iter_circular_sequences(self, df_main: pd.DataFrame) -> Iterator[SeqRecord]:
+        """Yield circularized sequences one at a time.
+
+        Holding all >=4 million doubled records before writing costs roughly
+        10-16 GB on a real sample, on top of the consSeq strings df_main
+        already holds.  SeqIO.write consumes any iterable, so the peak drops to
+        a single record.
+        """
+        for unique_id, seq in zip(df_main["unique_id"], df_main["consSeq"]):
+            yield SeqRecord(Seq(seq + seq), id=unique_id + "|circular", description="")
+
     def circularize_sequences(self, df_main: pd.DataFrame) -> list[SeqRecord]:
-        """Generate circularized sequences"""
-        circular_sequences = []
+        """Generate circularized sequences (materialised; prefer the iterator)."""
+        return list(self.iter_circular_sequences(df_main))
 
-        for _, row in df_main.iterrows():
-            # Get sequence
-            seq = row["consSeq"]
-
-            # Circularize: concatenate sequence with itself
-            circular_seq = seq + seq
-
-            # Create SeqRecord object
-            record = SeqRecord(Seq(circular_seq), id=row["unique_id"] + "|circular", description="")
-
-            circular_sequences.append(record)
-
-        return circular_sequences
-
-    def write_fasta(self, sequences: list[SeqRecord], output_file: Path) -> None:
+    def write_fasta(self, sequences: Iterable[SeqRecord], output_file: Path) -> None:
         """Write sequences to FASTA file"""
         SeqIO.write(sequences, output_file, "fasta")
 
@@ -518,8 +519,7 @@ class TandemToRing:
         self.logger.info(f"Classification results saved to '{self.output_file}'")
 
         # 8. Generate circular FASTA
-        circular_sequences = self.circularize_sequences(df_main)
-        self.write_fasta(circular_sequences, self.circular_fasta)
+        self.write_fasta(self.iter_circular_sequences(df_main), self.circular_fasta)
         self.logger.info(f"Circular sequences saved to '{self.circular_fasta}'")
 
         # 9. Display statistics

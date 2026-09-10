@@ -210,6 +210,12 @@ class EccSummary:
             hit: tuple[int, int] = cached[1]
             return hit
 
+        def remember(result: Optional[tuple[int, int]]) -> Optional[tuple[int, int]]:
+            # A decline is as worth caching as a success: without it every
+            # caller re-reads the whole file just to be declined again.
+            self._fasta_scan_cache = (key, result)
+            return result
+
         header_re = re.compile(rb">[^\n]*")
         total_bytes = 0
         newlines = 0
@@ -243,7 +249,7 @@ class EccSummary:
                     or b" \n" in scan
                     or b"\t\n" in scan
                 ):
-                    return None
+                    return remember(None)
 
                 newlines += body.count(b"\n")
                 sequences += scan.count(b"\n>")
@@ -258,7 +264,7 @@ class EccSummary:
                 or tail[:1] in (b" ", b"\t")
                 or tail[-1:] in (b" ", b"\t")
             ):
-                return None
+                return remember(None)
             # The tail is a final line with no newline; it starts a line because
             # everything before it was consumed up to and including a newline.
             if tail[:1] == b">":
@@ -267,11 +273,9 @@ class EccSummary:
 
         if at_file_start and not tail and total_bytes:
             # Nothing was consumable as lines; let the reference path decide.
-            return None
+            return remember(None)
 
-        counted = (sequences, total_bytes - newlines - header_bytes)
-        self._fasta_scan_cache = (key, counted)
-        return counted
+        return remember((sequences, total_bytes - newlines - header_bytes))
 
     def process_fasta(self, fasta_path: Union[Path, str]) -> dict:
         """Legacy wrapper to record FASTA statistics."""

@@ -430,3 +430,139 @@ class TestCreateReadnameClassification:
         result = module.create_readname_classification(df)
         assert len(result) == 2
         assert all(result["readClass"] == "Other")
+
+
+class TestComplexReadLookupIsHashed:
+    """Membership over the highly-consistent read names must not be a list scan.
+
+    `highly_consistent_multi` came from `.tolist()`, so `read_name in ...`
+    walked it once per complex read group.  Both counts grow with the sample:
+    on GlioSarc_P01_Tumor roughly 4-6e5 groups against a 2-3e5 name list, which
+    fable measured at 12 minutes to over an hour - the only genuinely quadratic
+    term left in this module.
+    """
+
+    class _Tally(str):
+        eq_calls = 0
+
+        def __eq__(self, other):
+            type(self).eq_calls += 1
+            return str.__eq__(self, other)
+
+        def __hash__(self):
+            return str.__hash__(self)
+
+    @staticmethod
+    def _module(tmp_path):
+        return TandemToRing(tmp_path / "in.txt", tmp_path / "out.csv", tmp_path / "out.fasta")
+
+    @classmethod
+    def _frames(cls, id_factory, names=12):
+        complex_rows = []
+        for index in range(names):
+            for copy in range(2):
+                complex_rows.append(
+                    {
+                        ColumnStandard.READS: id_factory(f"read{index}"),
+                        "Effective_Length": 50,
+                        "copyNum": 2.0,
+                        "consLen": 100,
+                        "classification": "",
+                    }
+                )
+        consistency = pd.DataFrame(
+            {
+                "readName": [id_factory(f"read{i}") for i in range(names)],
+                "consistency_type": ["highly_consistent"] * names,
+                "num_regions": [2] * names,
+            }
+        )
+        return pd.DataFrame(complex_rows), consistency
+
+    def test_lookup_does_not_scan_the_name_list(self, tmp_path):
+        complex_df, consistency = self._frames(self._Tally)
+        module = self._module(tmp_path)
+
+        type(self)._Tally.eq_calls = 0
+        module.process_and_classify_complex_reads(complex_df, consistency)
+
+        # A hashed lookup costs at most a couple of equality checks per probe
+        # (hash collisions); a list scan costs one per stored name per probe.
+        assert self._Tally.eq_calls <= len(consistency) * 2, (
+            f"{self._Tally.eq_calls} equality checks for {len(consistency)} names"
+        )
+
+    def test_classification_is_unchanged(self, tmp_path):
+        complex_df, consistency = self._frames(str, names=3)
+        module = self._module(tmp_path)
+
+        result = module.process_and_classify_complex_reads(complex_df, consistency)
+
+        # Each read merges to one row; Effective_Length 50+50=100 >= 70.
+        assert len(result) == 3
+        assert set(result["classification"]) == {"CtcR-inversion"}
+        assert list(result["Effective_Length"]) == [100, 100, 100]
+        assert list(result["copyNum"]) == [4.0, 4.0, 4.0]
+
+    def test_reads_absent_from_the_list_take_the_other_branch(self, tmp_path):
+        complex_df, consistency = self._frames(str, names=2)
+        consistency = consistency.iloc[:1]  # only read0 is highly consistent
+        module = self._module(tmp_path)
+
+        result = module.process_and_classify_complex_reads(complex_df, consistency)
+
+        merged = result[result[ColumnStandard.READS] == "read0"]
+        assert len(merged) == 1
+        assert len(result[result[ColumnStandard.READS] == "read1"]) >= 1
+
+
+class TestCircularSequencesAreStreamed:
+    """The 4-million-record FASTA must not be materialised before writing.
+
+    circularize_sequences built every SeqRecord into a list and only then
+    called SeqIO.write.  With >=4,032,959 records of ~1 kb consensus, doubled,
+    that is roughly 10-16 GB resident on top of df_main, which still holds all
+    the consSeq strings - the largest memory peak in this module.
+    """
+
+    @staticmethod
+    def _module(tmp_path):
+        return TandemToRing(tmp_path / "in.txt", tmp_path / "out.csv", tmp_path / "out.fasta")
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "unique_id": ["r1", "r2", "r3"],
+                "consSeq": ["ACGT", "TTGGCC", "A"],
+            }
+        )
+
+    def test_streaming_writer_emits_the_same_file(self, tmp_path):
+        module = self._module(tmp_path)
+        frame = self._frame()
+
+        listed = tmp_path / "listed.fasta"
+        module.write_fasta(module.circularize_sequences(frame), listed)
+
+        streamed = tmp_path / "streamed.fasta"
+        module.write_fasta(module.iter_circular_sequences(frame), streamed)
+
+        assert streamed.read_bytes() == listed.read_bytes()
+
+    def test_iter_does_not_materialise_a_list(self, tmp_path):
+        module = self._module(tmp_path)
+        produced = module.iter_circular_sequences(self._frame())
+
+        assert not isinstance(produced, list)
+        first = next(iter(produced))
+        assert first.id == "r1|circular"
+        assert str(first.seq) == "ACGTACGT"
+        assert first.description == ""
+
+    def test_records_double_each_sequence(self, tmp_path):
+        module = self._module(tmp_path)
+        records = list(module.iter_circular_sequences(self._frame()))
+
+        assert [r.id for r in records] == ["r1|circular", "r2|circular", "r3|circular"]
+        assert [str(r.seq) for r in records] == ["ACGTACGT", "TTGGCCTTGGCC", "AA"]

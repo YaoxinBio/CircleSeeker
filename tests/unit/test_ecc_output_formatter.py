@@ -485,3 +485,75 @@ class TestSummaryTableIndexesRegions:
 
         assert len(summary) == 2
         assert list(summary["chr"]) == [".", "."]
+
+
+class TestCeccValidationRunsOnce:
+    """The Cecc sequence check must not run twice over the same inputs.
+
+    Both callers (format_output here, and ecc_packager) validate before writing
+    any CSV, then call generate_fasta_files, which validated the identical
+    `sequences`/`summary_df` again. The check groups per confirmed Cecc id, so
+    the second pass costs 10-20 s at real scale and can only reach the same
+    conclusion.
+    """
+
+    @staticmethod
+    def _inputs():
+        summary = pd.DataFrame(
+            {
+                "eccDNA_id": ["U1"],
+                "type": ["Uecc"],
+                "state": ["Confirmed"],
+                "location": ["chr1:1-10(+)"],
+                "length": [10],
+            }
+        )
+        return {"U1": "ACGTACGTAC"}, summary
+
+    def test_validated_flag_skips_the_second_check(self, tmp_path, monkeypatch):
+        import circleseeker.modules.ecc_output_formatter as fmt
+
+        sequences, summary = self._inputs()
+        calls = {"n": 0}
+        original = fmt.validate_confirmed_cecc_sequences
+
+        def counting(seqs, df):
+            calls["n"] += 1
+            return original(seqs, df)
+
+        monkeypatch.setattr(fmt, "validate_confirmed_cecc_sequences", counting)
+        fmt.generate_fasta_files(sequences, tmp_path, summary, validated=True)
+
+        assert calls["n"] == 0
+
+    def test_default_still_validates(self, tmp_path, monkeypatch):
+        import circleseeker.modules.ecc_output_formatter as fmt
+
+        sequences, summary = self._inputs()
+        calls = {"n": 0}
+        original = fmt.validate_confirmed_cecc_sequences
+
+        def counting(seqs, df):
+            calls["n"] += 1
+            return original(seqs, df)
+
+        monkeypatch.setattr(fmt, "validate_confirmed_cecc_sequences", counting)
+        fmt.generate_fasta_files(sequences, tmp_path, summary)
+
+        assert calls["n"] == 1
+
+    def test_written_files_are_the_same_either_way(self, tmp_path):
+        import circleseeker.modules.ecc_output_formatter as fmt
+
+        sequences, summary = self._inputs()
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir(); b.mkdir()
+
+        fmt.generate_fasta_files(sequences, a, summary)
+        fmt.generate_fasta_files(sequences, b, summary, validated=True)
+
+        produced_a = sorted(p.relative_to(a) for p in a.rglob("*") if p.is_file())
+        produced_b = sorted(p.relative_to(b) for p in b.rglob("*") if p.is_file())
+        assert produced_a == produced_b
+        for rel in produced_a:
+            assert (a / rel).read_bytes() == (b / rel).read_bytes()

@@ -730,3 +730,126 @@ class TestExtractUnclassified:
         result = clf.extract_unclassified(df, set())
         assert "quality_category" in result.columns
         assert "unclass_reason" in result.columns
+
+
+class TestUnclassifiedBreakdownIsVectorised:
+    """The HQ/LQ split is a DEBUG line; it must not cost a groupby loop.
+
+    Both report sites iterated `unclassified_df.groupby("query_id")` and ran
+    `(group["quality_category"] == "High_quality").any()` per group, purely to
+    fill in one debug message.  The group count is unclassified queries, which
+    grows with the sample - fable measured 32 us per group, i.e. 32-64 s at
+    1-2 million groups.
+    """
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "query_id": ["q1", "q1", "q2", "q3", "q3", "q4"],
+                "quality_category": [
+                    "Low_quality",
+                    "High_quality",   # q1 has one HQ -> counts as HQ
+                    "Low_quality",    # q2 is LQ only
+                    "Low_quality",
+                    "Low_quality",    # q3 is LQ only
+                    "High_quality",   # q4 is HQ
+                ],
+            }
+        )
+
+    @staticmethod
+    def _reference(frame):
+        hq = lq = 0
+        for _, group in frame.groupby("query_id"):
+            if (group["quality_category"] == "High_quality").any():
+                hq += 1
+            else:
+                lq += 1
+        return hq, lq
+
+    def test_counts_match_the_per_group_loop(self):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        frame = self._frame()
+        assert UMeccClassifier._unclassified_quality_breakdown(frame) == self._reference(frame)
+
+    def test_empty_frame_reports_zero(self):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        empty = pd.DataFrame({"query_id": [], "quality_category": []})
+        assert UMeccClassifier._unclassified_quality_breakdown(empty) == (0, 0)
+
+    def test_missing_column_is_treated_as_low_quality(self):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        frame = pd.DataFrame({"query_id": ["a", "b", "b"]})
+        assert UMeccClassifier._unclassified_quality_breakdown(frame) == (0, 2)
+
+    def test_breakdown_does_not_iterate_groups(self, monkeypatch):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        frame = self._frame()
+        original = pd.core.groupby.generic.DataFrameGroupBy.__iter__
+
+        def boom(self):
+            raise AssertionError("breakdown still iterates groups")
+
+        monkeypatch.setattr(pd.core.groupby.generic.DataFrameGroupBy, "__iter__", boom)
+        try:
+            assert UMeccClassifier._unclassified_quality_breakdown(frame) == (2, 2)
+        finally:
+            monkeypatch.setattr(pd.core.groupby.generic.DataFrameGroupBy, "__iter__", original)
+
+
+class TestPerQueryAlignmentLookup:
+    """Looking up one query's alignments must not build an Index per query.
+
+    `df.groupby("query_id", sort=False).groups` materialises a pandas Index
+    object for every group.  At ~2 million distinct query_ids that is millions
+    of objects and hundreds of MB resident; fable measured 11.2 s vs 2.7 s for
+    `.indices` on a 4M-row / 2M-group frame.
+    """
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "query_id": ["q1", "q2", "q1", "q3", "q2"],
+                "mapq": [60, 10, 55, 30, 20],
+            },
+            index=[10, 11, 12, 13, 14],
+        )
+
+    def test_lookup_matches_a_boolean_selection(self):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        frame = self._frame()
+        positions = UMeccClassifier._positions_by_query(frame)
+
+        for query in ("q1", "q2", "q3"):
+            expected = frame[frame["query_id"] == query]
+            got = UMeccClassifier._alignments_for_query(frame, positions, query, None)
+            pd.testing.assert_frame_equal(got, expected)
+
+    def test_unknown_query_returns_the_fallback(self):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        frame = self._frame()
+        positions = UMeccClassifier._positions_by_query(frame)
+        sentinel = frame.head(1)
+
+        got = UMeccClassifier._alignments_for_query(frame, positions, "absent", sentinel)
+        assert got is sentinel
+
+    def test_lookup_does_not_use_the_groups_mapping(self, monkeypatch):
+        from circleseeker.modules.um_classify import UMeccClassifier
+
+        def boom(self):
+            raise AssertionError("built .groups instead of .indices")
+
+        monkeypatch.setattr(
+            pd.core.groupby.generic.DataFrameGroupBy, "groups", property(boom)
+        )
+        positions = UMeccClassifier._positions_by_query(self._frame())
+        assert set(positions) == {"q1", "q2", "q3"}

@@ -1280,3 +1280,85 @@ class TestAugmentConfirmedFromOverlapIndexesIds:
 
         assert confirmed.loc[0, "copy_number"] == 10.0
         assert "inferred_reads" not in confirmed.columns
+
+
+class TestAugmentationWritesByPosition:
+    """Augmentation must not allocate a whole-table mask per id.
+
+    The indexed version still built a 1,148,834-long boolean array for each of
+    the 9,594 augmented ids and ran three masked reads and three masked writes
+    over the full frame - fable measured 3.7 ms per id, about 35 s total.
+    Positional writes reach the same rows in 0.03 ms.
+
+    The mask was originally kept out of a concern about dtype promotion. That
+    concern was checked and does not hold: on pandas 2.3.3 `.loc[mask, col] = v`
+    and `.iloc[positions, col] = v` promote identically (verified for float into
+    an int column and str into an int column), because .loc converts the mask to
+    positions and takes the same setitem path.
+    """
+
+    @staticmethod
+    def _tables():
+        confirmed = pd.DataFrame(
+            {
+                "eccDNA_id": ["C0", "C1", "C2"],
+                "copy_number": [10, 20, 30],   # int column on purpose
+                "reads_count": [4, 5, 6],
+            }
+        )
+        simple = pd.DataFrame(
+            {
+                "eccDNA_id": ["I0"],
+                "copy_number": [1.5],
+                "num_split_reads": [2],
+            }
+        )
+        return confirmed, simple, {"I0": "C1"}
+
+    def test_writes_do_not_touch_untargeted_rows_in_a_wide_frame(self):
+        """A positional write must not read or rewrite the whole column.
+
+        Rows outside `positions` keep their exact objects, which a
+        mask-and-reassign round trip through the full column would not
+        guarantee for object dtype.
+        """
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        marker = ["untouched"]
+        confirmed = pd.DataFrame(
+            {
+                "eccDNA_id": ["C0", "C1"],
+                "copy_number": [10, 20],
+                "reads_count": [4, 5],
+                "note": [marker, ["other"]],
+            }
+        )
+        simple = pd.DataFrame(
+            {"eccDNA_id": ["I0"], "copy_number": [1.5], "num_split_reads": [2]}
+        )
+
+        _augment_confirmed_from_overlap(confirmed, simple, {"I0": "C1"}, None, {})
+
+        assert confirmed.loc[0, "note"] is marker
+        assert confirmed.loc[1, "copy_number"] == 21.5
+
+    def test_int_column_is_promoted_exactly_as_before(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed, simple, mapping = self._tables()
+        _augment_confirmed_from_overlap(confirmed, simple, mapping, None, {})
+
+        assert str(confirmed["copy_number"].dtype) == "float64"
+        assert confirmed["copy_number"].tolist() == [10.0, 21.5, 30.0]
+        assert confirmed["reads_count"].tolist() == [4, 7, 6]
+        assert confirmed["inferred_reads"].tolist() == [0, 2, 0]
+
+    def test_rows_outside_the_match_are_untouched(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed, simple, mapping = self._tables()
+        before = confirmed.drop(index=1).copy()
+        _augment_confirmed_from_overlap(confirmed, simple, mapping, None, {})
+
+        after = confirmed.drop(index=1)[["eccDNA_id", "reads_count"]]
+        pd.testing.assert_frame_equal(after, before[["eccDNA_id", "reads_count"]])

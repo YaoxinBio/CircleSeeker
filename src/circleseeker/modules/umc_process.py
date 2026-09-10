@@ -102,15 +102,14 @@ class BaseEccProcessor(ABC):
         return positions
 
     @staticmethod
-    def _mask_from_positions(frame: pd.DataFrame, positions: Any) -> pd.Series:
-        """Boolean mask over `frame` selecting exactly `positions`.
+    def _assign_at(frame: pd.DataFrame, positions: Any, column: str, value: Any) -> None:
+        """Write `value` into `column` for exactly `positions`.
 
-        Kept as a mask so the surrounding `.loc[mask, col] = value` assignments
-        retain their dtype behaviour.
+        `.loc[mask, col] = value` converts the mask to these same positions
+        internally and takes the same setitem path, dtype promotion included;
+        building the mask cost one full-length boolean array per key.
         """
-        selected: Any = np.zeros(len(frame), dtype=bool)
-        selected[positions] = True
-        return pd.Series(selected, index=frame.index)
+        frame.iloc[positions, frame.columns.get_loc(column)] = value
 
     @abstractmethod
     def get_eccDNA_prefix(self) -> str:
@@ -715,7 +714,6 @@ class MeccProcessor(BaseEccProcessor):
         query_positions = self._positions_by_value(df, "query_id")
         for query_id in df["query_id"].unique():
             positions = query_positions[query_id]
-            query_mask = self._mask_from_positions(df, positions)
             first_idx = df.index[positions[0]]
 
             q_start = df.loc[first_idx, "q_start"]
@@ -727,7 +725,7 @@ class MeccProcessor(BaseEccProcessor):
                 try:
                     extracted_seq = extract_ring_sequence(seq_str, int(q_start), int(cons_len))
                     extracted_seq = canonicalize_circular_sequence(extracted_seq)
-                    df.loc[query_mask, "eSeq"] = extracted_seq
+                    self._assign_at(df, positions, "eSeq", extracted_seq)
                     sequences_found += 1
                 except (ValueError, IndexError, TypeError):
                     sequences_missing += 1
@@ -755,7 +753,6 @@ class MeccProcessor(BaseEccProcessor):
                     continue
 
                 positions = cluster_positions[cluster_id]
-                cluster_mask = self._mask_from_positions(df, positions)
                 cluster_df = df.take(positions)
 
                 first_idx = cluster_df.index[0]
@@ -764,7 +761,7 @@ class MeccProcessor(BaseEccProcessor):
                 if seq and len(seq) > 0:
                     self.counter += 1
                     eccDNA_id = f"M{self.counter}"
-                    df.loc[cluster_mask, "eccDNA_id"] = eccDNA_id
+                    self._assign_at(df, positions, "eccDNA_id", eccDNA_id)
 
                     query_ids = cluster_df["query_id"].unique()
                     description = f"MeccDNA_cluster{cluster_id}_{len(query_ids)}queries"
@@ -783,14 +780,13 @@ class MeccProcessor(BaseEccProcessor):
                 )
                 for query_id in df[unclustered_mask]["query_id"].unique():
                     positions = unclustered_positions[within[query_id]]
-                    query_mask = self._mask_from_positions(df, positions)
                     first_idx = df.index[positions[0]]
                     seq = df.loc[first_idx, "eSeq"]
 
                     if seq and len(seq) > 0:
                         self.counter += 1
                         eccDNA_id = f"M{self.counter}"
-                        df.loc[query_mask, "eccDNA_id"] = eccDNA_id
+                        self._assign_at(df, positions, "eccDNA_id", eccDNA_id)
 
                         record = SeqRecord(
                             Seq(seq), id=eccDNA_id, description=f"MeccDNA_{query_id}"
@@ -1030,7 +1026,6 @@ class CeccProcessor(BaseEccProcessor):
         query_positions = self._positions_by_value(df, "query_id")
         for query_id in df["query_id"].unique():
             positions = query_positions[query_id]
-            query_mask = self._mask_from_positions(df, positions)
             first_idx = df.index[positions[0]]
 
             q_start = df.loc[first_idx, "q_start"]
@@ -1055,7 +1050,7 @@ class CeccProcessor(BaseEccProcessor):
                         seq_str, int(q_start) + 1, int(cons_len)
                     )
                     extracted_seq = canonicalize_circular_sequence(extracted_seq)
-                    df.loc[query_mask, "eSeq"] = extracted_seq
+                    self._assign_at(df, positions, "eSeq", extracted_seq)
                     sequences_found += 1
                 except (ValueError, IndexError, TypeError) as e:
                     raise ValueError(f"Invalid Cecc candidate sequence: {query_id}") from e
@@ -1083,7 +1078,6 @@ class CeccProcessor(BaseEccProcessor):
                     continue
 
                 positions = cluster_positions[cluster_id]
-                cluster_mask = self._mask_from_positions(df, positions)
                 cluster_df = df.take(positions)
 
                 first_idx = cluster_df.index[0]
@@ -1092,7 +1086,7 @@ class CeccProcessor(BaseEccProcessor):
                 if seq and len(seq) > 0:
                     self.counter += 1
                     eccDNA_id = f"C{self.counter}"
-                    df.loc[cluster_mask, "eccDNA_id"] = eccDNA_id
+                    self._assign_at(df, positions, "eccDNA_id", eccDNA_id)
 
                     query_ids = cluster_df["query_id"].unique()
                     num_segments = cluster_df.iloc[0].get("num_segments", 0)
@@ -1120,7 +1114,6 @@ class CeccProcessor(BaseEccProcessor):
                 )
                 for query_id in df[unclustered_mask]["query_id"].unique():
                     positions = unclustered_positions[within[query_id]]
-                    query_mask = self._mask_from_positions(df, positions)
                     first_idx = df.index[positions[0]]
                     seq = df.loc[first_idx, "eSeq"]
                     num_segments = df.loc[first_idx].get("num_segments", 0)
@@ -1128,7 +1121,7 @@ class CeccProcessor(BaseEccProcessor):
                     if seq and len(seq) > 0:
                         self.counter += 1
                         eccDNA_id = f"C{self.counter}"
-                        df.loc[query_mask, "eccDNA_id"] = eccDNA_id
+                        self._assign_at(df, positions, "eccDNA_id", eccDNA_id)
 
                         record = SeqRecord(
                             Seq(seq),

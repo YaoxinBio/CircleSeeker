@@ -692,14 +692,9 @@ class UMeccClassifier:
         )
 
         # Quality breakdown for unclassified
-        unclass_hq_queries = 0
-        unclass_lq_only_queries = 0
-        if not unclassified_df.empty:
-            for query_id, group in unclassified_df.groupby("query_id"):
-                if (group["quality_category"] == "High_quality").any():
-                    unclass_hq_queries += 1
-                else:
-                    unclass_lq_only_queries += 1
+        unclass_hq_queries, unclass_lq_only_queries = self._unclassified_quality_breakdown(
+            unclassified_df
+        )
 
         self.logger.info(
             f"Classification: Uecc={uecc_count:,}, Mecc={mecc_count:,}, "
@@ -746,6 +741,48 @@ class UMeccClassifier:
             pd.DataFrame().to_csv(unclass_out, index=False)
             self.logger.debug(f"Saved empty Unclassified results to {unclass_out}")
 
+    @staticmethod
+    def _positions_by_query(df: pd.DataFrame) -> dict:
+        """Row positions per query_id, without building an Index per group.
+
+        `.groups` allocates one pandas Index object per group; at ~2 million
+        distinct queries that is millions of objects held for the whole step.
+        `.indices` gives the same grouping as plain position arrays.
+        """
+        positions: dict = df.groupby("query_id", sort=False).indices
+        return positions
+
+    @staticmethod
+    def _alignments_for_query(
+        df: pd.DataFrame, positions_by_query: dict, query_id: Any, fallback: Any
+    ) -> Any:
+        """All alignments of one query, or `fallback` when it has none.
+
+        `df.take(positions)` selects the same rows in the same order and keeps
+        the same index labels as the previous `df.loc[Index]`.
+        """
+        positions = positions_by_query.get(query_id)
+        if positions is None:
+            return fallback
+        return df.take(positions)
+
+    @staticmethod
+    def _unclassified_quality_breakdown(unclassified_df: pd.DataFrame) -> tuple[int, int]:
+        """Count queries with any high-quality alignment, and those without.
+
+        Feeds one DEBUG line only.  Done per group it cost a groupby slice and
+        a Series comparison for every unclassified query - a count that grows
+        with the sample.
+        """
+        if unclassified_df.empty:
+            return 0, 0
+        if "quality_category" not in unclassified_df.columns:
+            return 0, int(unclassified_df["query_id"].nunique())
+        is_hq = unclassified_df["quality_category"] == "High_quality"
+        by_query = is_hq.groupby(unclassified_df["query_id"], sort=False).any()
+        hq = int(by_query.sum())
+        return hq, int(len(by_query) - hq)
+
     def classify_uecc_mecc(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
         """
         Classify Uecc and Mecc using a ring-coverage model on high-quality alignments.
@@ -769,7 +806,7 @@ class UMeccClassifier:
         # Filter by quality (keep original df for downstream unclassified extraction)
         # Note: we still consult all alignments (including low-quality partial hits) when deciding
         # whether a U candidate has significant non-contiguous / multi-chr evidence.
-        all_groups = df.groupby("query_id", sort=False).groups
+        all_groups = self._positions_by_query(df)
         high_quality = df[df[ColumnStandard.GAP_PERCENTAGE] <= self.gap_threshold].copy()
         self.logger.info(f"High-quality alignments: {len(high_quality):,} / {len(df):,}")
 
@@ -954,8 +991,7 @@ class UMeccClassifier:
                     ) + 1
                     continue
 
-                all_idx = all_groups.get(query_id)
-                all_alignments = df.loc[all_idx] if all_idx is not None else group
+                all_alignments = self._alignments_for_query(df, all_groups, query_id, group)
                 if self._u_has_significant_secondary_mapping(
                     all_alignments,
                     best_chr=best_chr,
@@ -1302,14 +1338,9 @@ class UMeccClassifier:
         )
 
         # Quality breakdown for unclassified
-        unclass_hq_queries = 0
-        unclass_lq_only_queries = 0
-        if not unclassified_df.empty:
-            for query_id, group in unclassified_df.groupby("query_id"):
-                if (group["quality_category"] == "High_quality").any():
-                    unclass_hq_queries += 1
-                else:
-                    unclass_lq_only_queries += 1
+        unclass_hq_queries, unclass_lq_only_queries = self._unclassified_quality_breakdown(
+            unclassified_df
+        )
 
         self.logger.info(
             f"Classification: Uecc={uecc_count:,}, Mecc={mecc_count:,}, "

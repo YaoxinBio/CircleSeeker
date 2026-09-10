@@ -243,16 +243,33 @@ class Pipeline:
                     fasta_files.append(fasta_path)
 
         # Combine all FASTA files
+        self._append_fasta_files(fasta_files, output_file)
+
+    @staticmethod
+    def _append_fasta_files(
+        fasta_files: list[Path], output_file: Path, block_size: int = 8 << 20
+    ) -> None:
+        """Concatenate FASTA files, ensuring each ends with a newline.
+
+        Copied in blocks: the state results include read-level FASTAs, and
+        `all_filtered.fasta` is the whole input minus CtcR reads.  Reading one
+        of those into a single str made the peak equal to the file, on top of
+        the file itself already sitting in /dev/shm under turbo mode.
+        """
         with open(output_file, "w") as out_f:
             for fasta in fasta_files:
-                if fasta.exists() and fasta.stat().st_size > 0:
-                    with open(fasta, "r") as in_f:
-                        contents = in_f.read()
-                        if not contents:
-                            continue
-                        out_f.write(contents)
-                        if not contents.endswith("\n"):
-                            out_f.write("\n")
+                if not (fasta.exists() and fasta.stat().st_size > 0):
+                    continue
+                last_char = ""
+                with open(fasta, "r") as in_f:
+                    while True:
+                        chunk = in_f.read(block_size)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        last_char = chunk[-1]
+                if last_char and last_char != "\n":
+                    out_f.write("\n")
 
     def _safe_copy_file(self, src: Optional[Path], dest: Path) -> bool:
         """Copy a single file into the final output directory if it exists."""

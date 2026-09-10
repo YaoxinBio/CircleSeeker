@@ -756,3 +756,97 @@ class TestTurboModeTupleOrdering:
         # Cleanup
         symlink_path.unlink()
         shm_path.rmdir()
+
+
+class TestCombinedFastaIsStreamed:
+    """Combining FASTA outputs must not hold a whole file in memory.
+
+    `in_f.read()` turned each input into one Python str. The state results
+    include the read-level FASTAs - `all_filtered.fasta` is the 76 GB input
+    minus CtcR reads - so the peak equalled the largest file, and under turbo
+    that file already lives in /dev/shm: the data, its str copy and the output
+    were all resident at once. Copying in blocks bounds the peak.
+    """
+
+    @staticmethod
+    def _pipeline(tmp_path):
+        from circleseeker.core.pipeline import Pipeline
+
+        obj = Pipeline.__new__(Pipeline)
+        return obj
+
+    def test_streamed_output_matches_a_full_read(self, tmp_path):
+        from circleseeker.core.pipeline import Pipeline
+
+        a = tmp_path / "a.fasta"
+        b = tmp_path / "b.fasta"
+        a.write_text(">s1\nACGT\n")
+        b.write_text(">s2\nTTTT")          # no trailing newline
+        empty = tmp_path / "empty.fasta"
+        empty.write_text("")
+
+        expected = ">s1\nACGT\n>s2\nTTTT\n"
+        out = tmp_path / "combined.fasta"
+        Pipeline._append_fasta_files([a, empty, b], out)
+
+        assert out.read_text() == expected
+
+    def test_missing_and_empty_inputs_are_skipped(self, tmp_path):
+        from circleseeker.core.pipeline import Pipeline
+
+        present = tmp_path / "p.fasta"
+        present.write_text(">x\nAA\n")
+        out = tmp_path / "c.fasta"
+
+        Pipeline._append_fasta_files(
+            [tmp_path / "absent.fasta", tmp_path / "gone.fasta", present], out
+        )
+        assert out.read_text() == ">x\nAA\n"
+
+    def test_large_input_is_copied_in_blocks(self, tmp_path):
+        from circleseeker.core.pipeline import Pipeline
+
+        big = tmp_path / "big.fasta"
+        payload = "".join(f">r{i}\n{'ACGT' * 8}\n" for i in range(4000))
+        big.write_text(payload)
+        out = tmp_path / "out.fasta"
+
+        reads = {"max": 0}
+        real_open = open
+
+        class _Probe:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def read(self, size=-1):
+                chunk = self._handle.read(size)
+                reads["max"] = max(reads["max"], len(chunk) if chunk else 0)
+                return chunk
+
+            def __enter__(self):
+                self._handle.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._handle.__exit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._handle, name)
+
+        import builtins
+
+        def probing_open(file, *args, **kwargs):
+            handle = real_open(file, *args, **kwargs)
+            return _Probe(handle) if str(file) == str(big) else handle
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(builtins, "open", probing_open)
+        try:
+            Pipeline._append_fasta_files([big], out, block_size=4096)
+        finally:
+            monkey.undo()
+
+        assert out.read_text() == payload
+        assert 0 < reads["max"] < len(payload), (
+            f"read {reads['max']} bytes at once from a {len(payload)}-byte file"
+        )

@@ -1414,24 +1414,27 @@ def _augment_confirmed_from_overlap(
     # single grouping pass: that comparison costs 92.9 ms on the 1,148,834-row
     # GlioSarc_P01_Tumor table and ran once per augmented id.
     confirmed_positions = confirmed_df.groupby("eccDNA_id", sort=False).indices
+    # Positional writes reach exactly the rows the boolean mask selected -
+    # .loc converts a mask to these same positions internally, including the
+    # dtype promotion - without allocating a full-table array per id.
+    cn_col = confirmed_df.columns.get_loc("copy_number") if "copy_number" in confirmed_df.columns else None
+    rc_col = confirmed_df.columns.get_loc("reads_count") if "reads_count" in confirmed_df.columns else None
+    ir_col = confirmed_df.columns.get_loc("inferred_reads")
     for conf_id, (add_cn, add_reads) in augment.items():
         positions = confirmed_positions.get(conf_id)
         if positions is None or len(positions) == 0:
             continue
-        selected: Any = np.zeros(len(confirmed_df), dtype=bool)
-        selected[positions] = True
-        mask = pd.Series(selected, index=confirmed_df.index)
-        if "copy_number" in confirmed_df.columns:
-            old_cn = confirmed_df.loc[mask, "copy_number"].iloc[0]
-            confirmed_df.loc[mask, "copy_number"] = (
+        if cn_col is not None:
+            old_cn = confirmed_df.iat[positions[0], cn_col]
+            confirmed_df.iloc[positions, cn_col] = (
                 (float(old_cn) if pd.notna(old_cn) else 0.0) + add_cn
             )
-        if "reads_count" in confirmed_df.columns:
-            old_rc = confirmed_df.loc[mask, "reads_count"].iloc[0]
-            confirmed_df.loc[mask, "reads_count"] = (
+        if rc_col is not None:
+            old_rc = confirmed_df.iat[positions[0], rc_col]
+            confirmed_df.iloc[positions, rc_col] = (
                 (int(old_rc) if pd.notna(old_rc) else 0) + int(add_reads)
             )
-        confirmed_df.loc[mask, "inferred_reads"] = int(add_reads)
+        confirmed_df.iloc[positions, ir_col] = int(add_reads)
 
     augmented_count = len(augment)
     logger.info(

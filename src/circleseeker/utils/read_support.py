@@ -41,7 +41,10 @@ def collect_support(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
             raise ValueError(f"Conflicting RCA support for candidate {key}")
         support[key] = entry
 
-    for _, row in df.iterrows():
+    # Every access below is `row.get(...)`, which a plain dict answers the same
+    # way.  iterrows would build one object Series per row, and this runs about
+    # 1.1 million times from each of ecc_dedup and umc_process.
+    for row in df.to_dict("records"):
         encoded = row.get("candidate_support")
         if isinstance(encoded, str) and encoded.strip():
             for key, item in json.loads(encoded).items():
