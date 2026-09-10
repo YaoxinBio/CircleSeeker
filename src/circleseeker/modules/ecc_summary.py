@@ -49,6 +49,28 @@ class EccSummary:
         self._original_fasta: Optional[Path] = None
         self._processed_csv: Optional[Path] = None
 
+    def _count_reads_by_line(self, path: Path) -> tuple[int, int]:
+        """Reference read count, preserving this routine's own line semantics.
+
+        Note this differs slightly from _scan_fasta_by_line: the header test
+        here is not stripped first.  The block scanner declines exactly the
+        inputs where that distinction could matter.
+        """
+        total_reads = 0
+        total_length = 0
+        current_len = 0
+        with open(path, "r") as handle:
+            for line in handle:
+                if line.startswith(">"):
+                    if current_len:
+                        total_length += current_len
+                        current_len = 0
+                    total_reads += 1
+                else:
+                    current_len += len(line.strip())
+        total_length += current_len
+        return total_reads, total_length
+
     def collect_read_statistics(self, fasta_path: Path, processed_csv: Path) -> dict:
         """Collect read classification statistics.
 
@@ -64,18 +86,14 @@ class EccSummary:
         # Count total reads from FASTA
         total_reads = 0
         total_length = 0
-        current_len = 0
         try:
-            with open(fasta_path, "r") as f:
-                for line in f:
-                    if line.startswith(">"):
-                        if current_len:
-                            total_length += current_len
-                            current_len = 0
-                        total_reads += 1
-                    else:
-                        current_len += len(line.strip())
-            total_length += current_len
+            # process_fasta has usually already scanned this exact file for the
+            # same two numbers; the block scanner caches that result, so the
+            # 76 GB input is read once instead of twice.
+            counted = self._scan_fasta_in_blocks(Path(fasta_path))
+            if counted is None:
+                counted = self._count_reads_by_line(Path(fasta_path))
+            total_reads, total_length = counted
             self.logger.debug(f"Total reads counted: {total_reads}")
         except FileNotFoundError:
             self.logger.error(f"FASTA file not found: {fasta_path}")
@@ -185,6 +203,13 @@ class EccSummary:
         input where plain byte arithmetic would not reproduce `str.strip()`
         semantics: carriage returns, blank lines, or leading/trailing blanks.
         """
+        stat = path.stat()
+        key = (str(path), stat.st_size, stat.st_mtime_ns, block_size)
+        cached = getattr(self, "_fasta_scan_cache", None)
+        if cached is not None and cached[0] == key:
+            hit: tuple[int, int] = cached[1]
+            return hit
+
         header_re = re.compile(rb">[^\n]*")
         total_bytes = 0
         newlines = 0
@@ -244,7 +269,9 @@ class EccSummary:
             # Nothing was consumable as lines; let the reference path decide.
             return None
 
-        return sequences, total_bytes - newlines - header_bytes
+        counted = (sequences, total_bytes - newlines - header_bytes)
+        self._fasta_scan_cache = (key, counted)
+        return counted
 
     def process_fasta(self, fasta_path: Union[Path, str]) -> dict:
         """Legacy wrapper to record FASTA statistics."""

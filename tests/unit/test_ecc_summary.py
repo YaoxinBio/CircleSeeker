@@ -994,3 +994,82 @@ class TestFastaStatsAreCountedInBlocks:
         assert stats["total_sequences"] == 500
         assert stats["total_length"] == 5000
         assert counter["lines"] == 0, f"walked {counter['lines']} lines"
+
+
+class TestFastaIsScannedOnce:
+    """The same input must not be walked twice for the same two numbers.
+
+    ecc_summary calls process_fasta and then process_processed_csv, and the
+    latter re-derives total_reads/total_length from the identical file through
+    collect_read_statistics.  On GlioSarc_P01_Tumor that is a second pass over
+    76 GB - measured at ~4 MB/s once the page cache has been displaced by the
+    first pass, i.e. hours.
+    """
+
+    @staticmethod
+    def _summary(tmp_path):
+        from circleseeker.modules.ecc_summary import EccSummary
+
+        return EccSummary(sample_name="t", output_dir=tmp_path)
+
+    @staticmethod
+    def _fasta(tmp_path):
+        path = tmp_path / "reads.fasta"
+        path.write_text("".join(f">r{i}\n{'ACGT' * 5}\n" for i in range(40)), newline="")
+        return path
+
+    def test_second_pass_reuses_the_first_scan(self, tmp_path):
+        fasta = self._fasta(tmp_path)
+        csv = tmp_path / "processed.csv"
+        csv.write_text("readName,readClass\nr0,CtcR-perfect\n")
+
+        summary = self._summary(tmp_path)
+        summary.process_fasta(fasta)
+
+        opened = {"count": 0}
+        import builtins
+
+        real_open = builtins.open
+
+        def counting_open(file, *args, **kwargs):
+            if str(file) == str(fasta):
+                opened["count"] += 1
+            return real_open(file, *args, **kwargs)
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(builtins, "open", counting_open)
+        try:
+            summary.process_processed_csv(csv)
+        finally:
+            monkey.undo()
+
+        assert opened["count"] == 0, f"re-read the FASTA {opened['count']} times"
+
+    def test_reused_counts_match_a_direct_collect(self, tmp_path):
+        fasta = self._fasta(tmp_path)
+        csv = tmp_path / "processed.csv"
+        csv.write_text("readName,readClass\nr0,CtcR-perfect\n")
+
+        cached = self._summary(tmp_path)
+        cached.process_fasta(fasta)
+        cached_stats = cached.process_processed_csv(csv)
+
+        direct = self._summary(tmp_path)
+        direct_stats = direct.collect_read_statistics(fasta, csv)
+
+        assert cached_stats["total_reads"] == direct_stats["total_reads"] == 40
+        assert cached_stats["total_length"] == direct_stats["total_length"] == 800
+
+    def test_a_different_file_is_still_scanned(self, tmp_path):
+        first = self._fasta(tmp_path)
+        second = tmp_path / "other.fasta"
+        second.write_text(">x\nACGTACGT\n", newline="")
+        csv = tmp_path / "processed.csv"
+        csv.write_text("readName,readClass\nx,CtcR-perfect\n")
+
+        summary = self._summary(tmp_path)
+        summary.process_fasta(first)
+        stats = summary.collect_read_statistics(second, csv)
+
+        assert stats["total_reads"] == 1
+        assert stats["total_length"] == 8
