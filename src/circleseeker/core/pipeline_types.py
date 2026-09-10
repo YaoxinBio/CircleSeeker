@@ -77,6 +77,7 @@ class ResultKeys:
     CECC_HARMONIZED = "cecc_harmonized"
     # Read filter statistics
     READ_FILTER_TOTAL = "read_filter_total_reads"
+    READ_FILTER_BASES = "read_filter_total_bases"
     READ_FILTER_FILTERED = "read_filter_filtered_reads"
     READ_FILTER_RETAINED = "read_filter_retained_reads"
     READ_FILTER_CTCR = "read_filter_ctcr_reads"
