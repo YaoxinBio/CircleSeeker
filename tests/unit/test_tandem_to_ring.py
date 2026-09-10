@@ -662,3 +662,78 @@ class TestOverlapResolutionIsDeterministic:
         result = module.process_complex_group_with_graph_optimized(group)
 
         assert sorted(result.index) == [1, 2], sorted(result.index)
+
+
+class TestComplexClassificationUsesDicts:
+    """Adding `classification` must not rebuild a Series per read group.
+
+    `classification` is created on df_simple (line 139) but not on df_complex,
+    so every `row["classification"] = ...` in this loop adds a key the Series
+    does not have and pandas rebuilds it through _setitem_with_indexer_missing.
+    Measured on a frame of this shape: 150.2 us per row with the key absent,
+    33.7 us when present, 25.2 us as a dict - 6x, against 4-6e5 complex read
+    groups on GlioSarc_P01_Tumor.
+    """
+
+    @staticmethod
+    def _module(tmp_path):
+        return TandemToRing(tmp_path / "in.txt", tmp_path / "out.csv", tmp_path / "out.fasta")
+
+    @staticmethod
+    def _frames():
+        complex_df = pd.DataFrame(
+            {
+                ColumnStandard.READS: ["hc", "hc", "single", "multi", "multi"],
+                "Effective_Length": [50, 60, 99, 40, 45],
+                "copyNum": [2.0, 3.0, 1.0, 2.0, 2.0],
+                "consLen": [100, 100, 200, 300, 300],
+            }
+        )
+        consistency = pd.DataFrame(
+            {
+                "readName": ["hc"],
+                "consistency_type": ["highly_consistent"],
+                "num_regions": [2],
+            }
+        )
+        return complex_df, consistency
+
+    def test_all_three_branches_classify_as_before(self, tmp_path):
+        complex_df, consistency = self._frames()
+        result = self._module(tmp_path).process_and_classify_complex_reads(complex_df, consistency)
+
+        by_read = {r[ColumnStandard.READS]: r for _, r in result.iterrows()}
+        # highly consistent multi-record -> merged, Effective_Length 50+60=110 >= 70
+        assert by_read["hc"]["classification"] == "CtcR-inversion"
+        assert by_read["hc"]["Effective_Length"] == 110
+        assert by_read["hc"]["copyNum"] == 5.0
+        # single record with Effective_Length 99 -> perfect
+        assert by_read["single"]["classification"] == "CtcR-perfect"
+        # multi-record, not highly consistent -> every row hybrid
+        multi = result[result[ColumnStandard.READS] == "multi"]
+        assert len(multi) == 2
+        assert set(multi["classification"]) == {"CtcR-hybrid"}
+
+    def test_original_columns_survive(self, tmp_path):
+        complex_df, consistency = self._frames()
+        result = self._module(tmp_path).process_and_classify_complex_reads(complex_df, consistency)
+
+        for column in (ColumnStandard.READS, "Effective_Length", "copyNum", "consLen"):
+            assert column in result.columns
+        # groupby orders by read name: hc, multi, multi, single
+        assert result["consLen"].tolist() == [100, 300, 300, 200]
+
+    def test_hybrid_threshold_boundaries(self, tmp_path):
+        complex_df = pd.DataFrame(
+            {
+                ColumnStandard.READS: ["a", "b", "c"],
+                "Effective_Length": [99, 70, 69],
+                "copyNum": [1.0, 1.0, 1.0],
+                "consLen": [100, 100, 100],
+            }
+        )
+        consistency = pd.DataFrame({"readName": [], "consistency_type": [], "num_regions": []})
+        result = self._module(tmp_path).process_and_classify_complex_reads(complex_df, consistency)
+
+        got = dict(zip(result[ColumnStandard.READS], result["classification"]))
+        assert got == {"a": "CtcR-perfect", "b": "CtcR-hybrid", "c": "Other"}
