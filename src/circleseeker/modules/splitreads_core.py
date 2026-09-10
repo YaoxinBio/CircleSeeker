@@ -203,7 +203,7 @@ def get_idx_longest_pattern(list_group_order: list[str], list_pattern_region: li
 class PdRegion:
     """Represents a mapped region from pandas row."""
 
-    def __init__(self, pd_object: pd.Series):
+    def __init__(self, pd_object: Any):
         self.readid = pd_object["readid"]
         self.q_len = pd_object["q_len"]
         self.q_start = pd_object["q_start"]
@@ -301,7 +301,10 @@ def _run_minimap2_paf(
         paf_path.unlink(missing_ok=True)
 
 
-def _check_read_pattern(name: str, seq: str, list_hit: Optional[list[list[Any]]] = None) -> list:
+def _check_read_pattern(
+    name: str, seq: str, list_hit: Optional[list[list[Any]]] = None,
+    frame: Optional[pd.DataFrame] = None,
+) -> list:
     """Check for CTC (Circular Tandem Copy) pattern in read."""
     if list_hit is None:
         raise ValueError("list_hit is required (mappy backend removed)")
@@ -309,24 +312,8 @@ def _check_read_pattern(name: str, seq: str, list_hit: Optional[list[list[Any]]]
     list_result = []
 
     if len(list_hit) > 1:
-        header = [
-            "readid",
-            "q_len",
-            "q_start",
-            "q_end",
-            "ref",
-            "r_start",
-            "r_end",
-            "matchLen",
-            "blockLen",
-            "mapq",
-            "strand",
-        ]
-        df_mapping = pd.DataFrame(list_hit, columns=header)
-
+        df_mapping = (frame if frame is not None else _sorted_hits_frame(list_hit)).copy()
         df_mapping["mappedRegion"] = df_mapping.apply(combine_region_strand, axis=1)
-        df_mapping = df_mapping.sort_values(by="q_start")
-        df_mapping.reset_index(drop=True, inplace=True)
 
         list_check_pattern = df_mapping["mappedRegion"].tolist()
         list_group_order = make_group_order(list_check_pattern, 50)
@@ -384,6 +371,7 @@ def _merge_pd_regions(prev: "PdRegion", curr: "PdRegion", columns: pd.Index) -> 
 def _get_merge_all(
     name: str, seq: str,
     list_hit: Optional[list[list[Any]]] = None,
+    frame: Optional[pd.DataFrame] = None,
     *, allow_gap: int, allow_overlap: int, ref_merge_distance: int,
 ) -> list:
     """Get all merged alignments for a read."""
@@ -392,23 +380,7 @@ def _get_merge_all(
         raise ValueError("list_hit is required (mappy backend removed)")
 
     if len(list_hit) > 0:
-        header = [
-            "readid",
-            "q_len",
-            "q_start",
-            "q_end",
-            "ref",
-            "r_start",
-            "r_end",
-            "matchLen",
-            "blockLen",
-            "mapq",
-            "strand",
-        ]
-        df_mapping = pd.DataFrame(list_hit, columns=header)
-
-        df_mapping = df_mapping.sort_values(by="q_start")
-        df_mapping.reset_index(drop=True, inplace=True)
+        df_mapping = frame if frame is not None else _sorted_hits_frame(list_hit)
 
         if len(df_mapping) > 1:
             # Make initial hit objects
@@ -463,9 +435,41 @@ def _get_merge_all(
     return list_merged_result
 
 
+_HIT_COLUMNS = [
+    "readid",
+    "q_len",
+    "q_start",
+    "q_end",
+    "ref",
+    "r_start",
+    "r_end",
+    "matchLen",
+    "blockLen",
+    "mapq",
+    "strand",
+]
+
+
+def _sorted_hits_frame(list_hit: list[list[Any]]) -> pd.DataFrame:
+    """One sorted frame per read, shared by the two helpers below.
+
+    Both _check_read_pattern and _get_merge_all used to build this themselves
+    from the same list_hit - two frames, two sorts, two reindexes per read,
+    against millions of reads.
+
+    The sort stays `sort_values`: it is numpy quicksort, unstable above 16
+    elements, so a stable Python sort would reorder reads whose q_start ties.
+    """
+    frame = pd.DataFrame(list_hit, columns=_HIT_COLUMNS)
+    frame = frame.sort_values(by="q_start")
+    frame.reset_index(drop=True, inplace=True)
+    return frame
+
+
 def _process_read_hits(
     name: str, list_hit: list[list[Any]],
     *, allow_gap: int, allow_overlap: int, ref_merge_distance: int,
+    frame: Optional[pd.DataFrame] = None,
 ) -> list:
     """Process pre-computed hits for a single read (pattern detection + merge).
 
@@ -473,15 +477,17 @@ def _process_read_hits(
     calling mappy via _align_once.
     """
     list_result: list[Any] = []
+    if frame is None and list_hit:
+        frame = _sorted_hits_frame(list_hit)
 
-    list_chk_pattern = _check_read_pattern(name, "", list_hit=list_hit)
+    list_chk_pattern = _check_read_pattern(name, "", list_hit=list_hit, frame=frame)
     if len(list_chk_pattern) > 0:
         for idx, rTab in enumerate(list_chk_pattern, start=0):
             oTab = rTab + ["{:.2f}".format((rTab[3] - rTab[2]) / rTab[11]), idx, True]
             list_result.append(oTab)
     else:
         list_merged_result = _get_merge_all(
-            name, "", list_hit=list_hit,
+            name, "", list_hit=list_hit, frame=frame,
             allow_gap=allow_gap, allow_overlap=allow_overlap,
             ref_merge_distance=ref_merge_distance,
         )

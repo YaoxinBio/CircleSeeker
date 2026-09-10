@@ -28,6 +28,10 @@ from circleseeker.modules.splitreads_core import (
     check_breakpoint_direction,
     chk_circular_subgraph,
     SplitReadsCore,
+    _process_read_hits,
+    _sorted_hits_frame,
+    PdRegion,
+    combine_region_strand,
 )
 
 import logging
@@ -1216,3 +1220,73 @@ class TestComponentNodeOrderIsDeterministic:
         assert ours.number_of_edges() == 3
         assert list(nx.selfloop_edges(ours)) == [("a", "a")]
         assert list(ours.nodes()) == ["a", "b"]
+
+
+class TestReadHitsFrameIsBuiltOnce:
+    """One frame per read, not one per helper.
+
+    _check_read_pattern and _get_merge_all each did
+    `pd.DataFrame(list_hit, columns=header)` + `sort_values("q_start")` +
+    `reset_index()` over the same list_hit. fable measured 0.26-0.84 ms per
+    read against 1.5-3 million reads with alignments, i.e. 10-25 minutes, half
+    of it this duplicated construction.
+
+    The sort stays a pandas sort: `sort_values` uses numpy quicksort, which is
+    unstable above 16 elements, so replacing it with Python's stable `sorted`
+    would change the order of reads whose q_start ties.
+    """
+
+    HEADER = ["readid", "q_len", "q_start", "q_end", "ref", "r_start", "r_end",
+              "matchLen", "blockLen", "mapq", "strand"]
+
+    @classmethod
+    def _hits(cls, n=4):
+        rows = []
+        for index in range(n):
+            rows.append([
+                "read1", 5000, 1000 - index * 100, 1400 - index * 100,
+                "chr1", 20000 + index * 500, 20400 + index * 500,
+                400, 400, 60, "+",
+            ])
+        return rows
+
+    def test_shared_frame_matches_a_freshly_built_one(self):
+        hits = self._hits()
+        shared = _sorted_hits_frame(hits)
+
+        expected = pd.DataFrame(hits, columns=self.HEADER)
+        expected = expected.sort_values(by="q_start")
+        expected.reset_index(drop=True, inplace=True)
+
+        pd.testing.assert_frame_equal(shared, expected)
+
+    def test_results_are_unchanged_when_the_frame_is_passed_in(self):
+        hits = self._hits()
+        kwargs = dict(allow_gap=10, allow_overlap=10, ref_merge_distance=1000)
+
+        without = _process_read_hits("read1", hits, **kwargs)
+        with_frame = _process_read_hits("read1", hits, frame=_sorted_hits_frame(hits), **kwargs)
+
+        assert without == with_frame
+
+    def test_single_hit_and_empty_input(self):
+        kwargs = dict(allow_gap=10, allow_overlap=10, ref_merge_distance=1000)
+        one = self._hits(1)
+
+        assert _process_read_hits("read1", one, **kwargs) == _process_read_hits(
+            "read1", one, frame=_sorted_hits_frame(one), **kwargs
+        )
+        assert _process_read_hits("read1", [], **kwargs) == []
+
+    def test_ties_keep_the_pandas_ordering(self):
+        # 20 hits sharing q_start: above 16 elements numpy quicksort is unstable,
+        # so the shared frame must come from the same pandas call, not sorted()
+        hits = [["read1", 5000, 700, 900, f"chr{i}", i * 100, i * 100 + 200,
+                 200, 200, 60, "+"] for i in range(20)]
+        shared = _sorted_hits_frame(hits)
+        expected = pd.DataFrame(hits, columns=self.HEADER).sort_values(by="q_start")
+        expected.reset_index(drop=True, inplace=True)
+
+        assert list(shared["ref"]) == list(expected["ref"])
+
+
