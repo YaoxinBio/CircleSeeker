@@ -395,3 +395,93 @@ class TestGenerateFastaFiles:
         generate_fasta_files(sequences, tmp_path, summary)
         content = (tmp_path / "eccDNA_all.fasta").read_text()
         assert content == ""
+
+
+class TestSummaryTableIndexesRegions:
+    """The regions table must be indexed once, not rescanned per eccDNA.
+
+    `regions_df[regions_df["eccDNA_id"] == ecc_id]` ran a full element-wise
+    comparison over an object column for every row of unified_df.  On
+    GlioSarc_P01_Tumor that is ~1.17 million lookups over a regions table of
+    the same order; one such comparison measures 92.9 ms on that data.  This is
+    the last step of the pipeline, so the cost lands after everything else has
+    already been computed.
+    """
+
+    class _Tally(str):
+        calls = 0
+
+        def __eq__(self, other):
+            type(self).calls += 1
+            return str.__eq__(self, other)
+
+        def __hash__(self):
+            return str.__hash__(self)
+
+    @classmethod
+    def _tables(cls, id_factory, count=8):
+        unified = pd.DataFrame(
+            {
+                "eccDNA_id": [id_factory(f"U{index}") for index in range(count)],
+                "eccDNA_type": ["UeccDNA"] * count,
+                "State": ["Confirmed"] * count,
+                "Length": [300] * count,
+                "reads_count": [5] * count,
+                "copy_number": [2] * count,
+            }
+        )
+        regions = pd.DataFrame(
+            {
+                "eccDNA_id": [id_factory(f"U{index}") for index in range(count)],
+                "chr": ["chr1"] * count,
+                "start": [100 * index for index in range(count)],
+                "end": [100 * index + 300 for index in range(count)],
+                "strand": ["+"] * count,
+                "role": ["primary"] * count,
+            }
+        )
+        return unified, regions
+
+    def test_regions_are_not_rescanned_per_eccdna(self):
+        unified, regions = self._tables(self._Tally)
+        rows = len(regions)
+
+        type(self)._Tally.calls = 0
+        generate_summary_table(unified, regions)
+
+        assert self._Tally.calls <= rows, (
+            f"regions compared {self._Tally.calls} times for {rows} rows "
+            f"and {len(unified)} eccDNA"
+        )
+
+    def test_summary_values_match_the_per_row_scan(self):
+        unified, regions = self._tables(str, count=3)
+        summary = generate_summary_table(unified, regions)
+
+        assert list(summary["eccDNA_id"]) == ["U0", "U1", "U2"]
+        assert list(summary["chr"]) == ["chr1", "chr1", "chr1"]
+        assert list(summary["start"]) == [0, 100, 200]
+        assert list(summary["end"]) == [300, 400, 500]
+        assert list(summary["segment_count"]) == [1, 1, 1]
+        assert list(summary["location"]) == [
+            "chr1:0-300(+)",
+            "chr1:100-400(+)",
+            "chr1:200-500(+)",
+        ]
+
+    def test_eccdna_without_regions_falls_back_to_placeholders(self):
+        unified, regions = self._tables(str, count=2)
+        regions = regions[regions["eccDNA_id"] != "U1"]
+
+        summary = generate_summary_table(unified, regions)
+
+        assert list(summary["chr"]) == ["chr1", "."]
+        assert list(summary["start"]) == [0, "."]
+        assert summary.loc[1, "location"] == ""
+
+    def test_empty_regions_table_is_handled(self):
+        unified, regions = self._tables(str, count=2)
+        summary = generate_summary_table(unified, regions.iloc[0:0])
+
+        assert len(summary) == 2
+        assert list(summary["chr"]) == [".", "."]

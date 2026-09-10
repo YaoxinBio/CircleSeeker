@@ -619,16 +619,23 @@ def chk_circular_subgraph(
         rm_sl_subgraph = graph.copy()
         rm_sl_subgraph.remove_edges_from(nx.selfloop_edges(rm_sl_subgraph))
         solved = all(x <= 2 for x in [rm_sl_subgraph.degree[node] for node in list_nodes])
-        cyclic = len(nx.cycle_basis(nx.DiGraph(rm_sl_subgraph).to_undirected())) > 0
+        # nx.Graph() reaches the same simple undirected graph as a DiGraph
+        # round trip - both collapse parallel edges and keep insertion order -
+        # without materializing a second graph and deep-copying its attributes.
+        cyclic = len(nx.cycle_basis(nx.Graph(rm_sl_subgraph))) > 0
     else:
-        cyclic = len(nx.cycle_basis(nx.DiGraph(graph).to_undirected())) > 0
+        # At most one node: the only possible cycle is a self-loop, which `sl`
+        # already answers.  Rebuilding a directed and then an undirected graph
+        # here deep-copied graph-level attributes once per singleton component,
+        # and singletons dominate large samples.
+        cyclic = sl
 
     if not solved:
         cyclic = False
 
     test_graph = graph.copy()
     test_graph.remove_edges_from(nx.selfloop_edges(test_graph))
-    list_traversal = nx.cycle_basis(nx.DiGraph(test_graph).to_undirected())
+    list_traversal = nx.cycle_basis(nx.Graph(test_graph))
     if len(list_traversal) > 0:
         list_traversal_ini = list_traversal[0]
         if len(list_traversal_ini) == len(list_nodes):
@@ -1075,7 +1082,13 @@ class SplitReadsCore:
     ) -> tuple:
         """Resolve region string with strand info for one connected component."""
         gname = f"ec{idx}"
-        subgraph = G.to_undirected().subgraph(comp_nodes)
+        # Restrict first, then drop direction as a view.  Converting the whole
+        # breakpoint graph once per component made this loop O(components x
+        # full_graph): 19,125 components on GlioSarc_P01_Tumor took 110 minutes.
+        # Inducing on a node set and dropping direction commute, and both
+        # selections iterate nodes in G's insertion order, so the region string
+        # is unchanged.  Downstream cleanup copies before mutating.
+        subgraph = G.subgraph(comp_nodes).to_undirected(as_view=True)
         nodes = list(subgraph.nodes())
 
         regions, num_nodes, can_be_solved, contain_selfloop, is_cyclic = chk_circular_subgraph(
@@ -1126,7 +1139,7 @@ class SplitReadsCore:
             test_graph = subgraph.copy()
             test_graph.remove_edges_from(nx.selfloop_edges(test_graph))
 
-            list_traversal = nx.cycle_basis(nx.DiGraph(test_graph).to_undirected())
+            list_traversal = nx.cycle_basis(nx.Graph(test_graph))
             if len(list_traversal) == 0:
                 regions = ",".join(
                     f"{node}_{dict_majority_strand.get(node, '+')}" for node in nodes
@@ -1189,6 +1202,26 @@ class SplitReadsCore:
         df_graph_summary: pd.DataFrame, read_merged_ins_df: pd.DataFrame
     ) -> list[tuple]:
         """Collect read statistics for each eccDNA candidate."""
+        # Index the read/region table once instead of rescanning it per node.
+        # `df[df["mergeid"] == node]` walked an object column of 321,724 rows
+        # for each of 24,629 nodes on GlioSarc_P01_Tumor - the same quadratic
+        # shape already removed from ecc_dedup.  groupby().indices keeps each
+        # group's rows in table order, so the per-node slices are identical.
+        stats_by_mergeid: dict[str, tuple[int, list[str]]] = {}
+        if not read_merged_ins_df.empty:
+            spans = (
+                read_merged_ins_df["q_end"].astype(int)
+                - read_merged_ins_df["q_start"].astype(int)
+            )
+            readids = read_merged_ins_df["readid"].astype(str)
+            for mergeid, positions in read_merged_ins_df.groupby(
+                "mergeid", sort=False
+            ).indices.items():
+                stats_by_mergeid[str(mergeid)] = (
+                    int(spans.iloc[positions].sum()),
+                    readids.iloc[positions].tolist(),
+                )
+
         results = []
         for _, value in df_graph_summary.iterrows():
             gname = value["id"]
@@ -1204,11 +1237,11 @@ class SplitReadsCore:
 
             for node in merge_region.split(","):
                 node_no_strand = node.rsplit("_", 1)[0] if "_" in node else node
-                read_o = read_merged_ins_df[read_merged_ins_df["mergeid"] == node_no_strand]
-                total_base += (
-                    read_o["q_end"].astype(int) - read_o["q_start"].astype(int)
-                ).sum()
-                list_readid.extend(read_o["readid"].astype(str).tolist())
+                # A node with no rows contributed 0 bases and no reads before,
+                # exactly what an empty boolean mask produced.
+                node_bases, node_readids = stats_by_mergeid.get(node_no_strand, (0, []))
+                total_base += node_bases
+                list_readid.extend(node_readids)
 
             expect_cov = f"{float(total_base) / length_loci:.2f}" if length_loci > 0 else "0.00"
 

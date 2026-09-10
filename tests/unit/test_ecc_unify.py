@@ -1179,3 +1179,104 @@ class TestGenerateOverlapReport:
         report = generate_overlap_report(confirmed, None, None, set(), set())
         assert "No inferred simple eccDNA provided" in report
         assert "No inferred chimeric eccDNA provided" in report
+
+
+class TestAugmentConfirmedFromOverlapIndexesIds:
+    """Overlap augmentation must not rescan eccDNA_id once per matched pair.
+
+    Both loops compared a whole id column against one key at a time:
+    `inf_df[inf_df["eccDNA_id"] == inf_id]` and
+    `confirmed_df["eccDNA_id"] == conf_id`.  On GlioSarc_P01_Tumor the confirmed
+    table holds 1,148,834 rows and one such comparison measures 92.9 ms, so the
+    apply loop alone scaled to tens of minutes.  This is the same quadratic
+    shape already removed from ecc_dedup and splitreads_core.
+    """
+
+    class _Tally(str):
+        calls = 0
+
+        def __eq__(self, other):
+            type(self).calls += 1
+            return str.__eq__(self, other)
+
+        def __hash__(self):
+            return str.__hash__(self)
+
+    @classmethod
+    def _tables(cls, id_factory):
+        confirmed = pd.DataFrame(
+            {
+                "eccDNA_id": [id_factory(f"C{index}") for index in range(12)],
+                "copy_number": [10.0] * 12,
+                "reads_count": [4] * 12,
+            }
+        )
+        simple = pd.DataFrame(
+            {
+                "eccDNA_id": [id_factory(f"I{index}") for index in range(6)],
+                "copy_number": [1.5] * 6,
+                "num_split_reads": [2] * 6,
+            }
+        )
+        simple_map = {f"I{index}": f"C{index}" for index in range(6)}
+        return confirmed, simple, simple_map
+
+    def test_augmentation_does_not_rescan_id_columns(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed, simple, simple_map = self._tables(self._Tally)
+        rows = len(confirmed) + len(simple)
+
+        type(self)._Tally.calls = 0
+        _augment_confirmed_from_overlap(confirmed, simple, simple_map, None, {})
+
+        assert self._Tally.calls <= rows, (
+            f"id columns compared {self._Tally.calls} times for {rows} rows "
+            f"and {len(simple_map)} overlap pairs"
+        )
+
+    def test_augmented_values_are_unchanged(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed, simple, simple_map = self._tables(str)
+        _augment_confirmed_from_overlap(confirmed, simple, simple_map, None, {})
+
+        # Six confirmed entries each absorb one inferred entry; the rest stay put.
+        assert confirmed.loc[0, "copy_number"] == 11.5
+        assert confirmed.loc[0, "reads_count"] == 6
+        assert confirmed.loc[0, "inferred_reads"] == 2
+        assert confirmed.loc[6, "copy_number"] == 10.0
+        assert confirmed.loc[6, "reads_count"] == 4
+        assert confirmed.loc[6, "inferred_reads"] == 0
+
+    def test_repeated_inferred_rows_use_the_first_occurrence(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed = pd.DataFrame(
+            {"eccDNA_id": ["C0"], "copy_number": [10.0], "reads_count": [4]}
+        )
+        simple = pd.DataFrame(
+            {
+                "eccDNA_id": ["I0", "I0"],
+                "copy_number": [1.5, 99.0],
+                "num_split_reads": [2, 77],
+            }
+        )
+        _augment_confirmed_from_overlap(confirmed, simple, {"I0": "C0"}, None, {})
+
+        assert confirmed.loc[0, "copy_number"] == 11.5
+        assert confirmed.loc[0, "reads_count"] == 6
+
+    def test_unmatched_overlap_key_is_skipped(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed = pd.DataFrame(
+            {"eccDNA_id": ["C0"], "copy_number": [10.0], "reads_count": [4]}
+        )
+        simple = pd.DataFrame(
+            {"eccDNA_id": ["I0"], "copy_number": [1.5], "num_split_reads": [2]}
+        )
+        _augment_confirmed_from_overlap(confirmed, simple, {"missing": "C0"}, None, {})
+
+        assert confirmed.loc[0, "copy_number"] == 10.0
+        assert "inferred_reads" not in confirmed.columns

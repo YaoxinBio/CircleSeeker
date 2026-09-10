@@ -173,6 +173,19 @@ def generate_summary_table(
 
     summary_rows = []
 
+    # Index the regions once instead of rescanning them for every eccDNA.
+    # `regions_df[regions_df["eccDNA_id"] == ecc_id]` ran a full element-wise
+    # comparison over an object-dtype column once per row of unified_df, i.e.
+    # O(n_ecc x n_regions).  One such comparison measures 92.9 ms on the
+    # 1,148,834-row GlioSarc_P01_Tumor table, and this is the final step of the
+    # pipeline.  groupby().indices is built once; each lookup then selects the
+    # same rows, in the same order, with the same index labels.
+    empty_regions = regions_df.iloc[0:0]
+    if len(regions_df) and "eccDNA_id" in regions_df.columns:
+        regions_index = regions_df.groupby("eccDNA_id", sort=False).indices
+    else:
+        regions_index = {}
+
     for _, row in unified_df.iterrows():
         ecc_id = row["eccDNA_id"]
         ecc_type = row["eccDNA_type"]
@@ -180,7 +193,8 @@ def generate_summary_table(
         length = row.get("Length", row.get("length", 0))
 
         # Get regions for this eccDNA
-        ecc_regions = regions_df[regions_df["eccDNA_id"] == ecc_id]
+        positions = regions_index.get(ecc_id)
+        ecc_regions = empty_regions if positions is None else regions_df.take(positions)
 
         # Determine chr, start, end, strand and location based on type
         if ecc_type == "UeccDNA":
