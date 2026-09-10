@@ -181,10 +181,11 @@ def generate_summary_table(
     # pipeline.  groupby().indices is built once; each lookup then selects the
     # same rows, in the same order, with the same index labels.
     empty_regions = regions_df.iloc[0:0]
-    if len(regions_df) and "eccDNA_id" in regions_df.columns:
-        regions_index = regions_df.groupby("eccDNA_id", sort=False).indices
-    else:
-        regions_index = {}
+    # A missing eccDNA_id column used to raise from the boolean comparison;
+    # keep raising rather than quietly emitting a table of placeholders.
+    regions_index = (
+        regions_df.groupby("eccDNA_id", sort=False).indices if len(regions_df) else {}
+    )
 
     for _, row in unified_df.iterrows():
         ecc_id = row["eccDNA_id"]

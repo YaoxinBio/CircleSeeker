@@ -1026,8 +1026,14 @@ class SplitReadsCore:
         for (left, right), weight in graph_filt.items():
             G.add_edge(left, right, weight=weight)
 
-        # Get connected components (subgraphs)
-        subgraphs = list(nx.connected_components(G.to_undirected()))
+        # Get connected components (subgraphs).  This conversion is also what
+        # each component is induced from below, so it is done once here: doing
+        # it per component was O(components x full_graph), 110 minutes on
+        # GlioSarc_P01_Tumor.  A view would be cheaper still but iterates
+        # neighbours in set order rather than edge insertion order, which
+        # changes what cycle_basis returns.
+        undirected_graph = G.to_undirected()
+        subgraphs = list(nx.connected_components(undirected_graph))
 
         self.logger.info(f"Found {len(subgraphs)} potential circular subgraphs")
 
@@ -1038,7 +1044,8 @@ class SplitReadsCore:
         list_graph_summary = []
         for idx, comp_nodes in enumerate(subgraphs, start=1):
             tup = self._resolve_component_regions(
-                idx, comp_nodes, G, dict_pair_strand, dict_majority_strand
+                idx, comp_nodes, G, dict_pair_strand, dict_majority_strand,
+                undirected_graph=undirected_graph,
             )
             if tup[1]:
                 list_graph_summary.append(tup)
@@ -1073,22 +1080,30 @@ class SplitReadsCore:
         return eccdna_final_path
 
     @staticmethod
+    def _undirected_component(undirected_graph: "nx.MultiGraph", comp_nodes: set) -> Any:
+        """Induce one component from an already-undirected graph.
+
+        Kept separate so the adjacency order it yields can be pinned against a
+        per-component `G.to_undirected().subgraph(...)` in the tests.
+        """
+        return undirected_graph.subgraph(comp_nodes)
+
+    @staticmethod
     def _resolve_component_regions(
         idx: int,
         comp_nodes: set,
         G: "nx.MultiDiGraph",
         dict_pair_strand: dict[tuple[str, str], set[str]],
         dict_majority_strand: dict[str, str],
+        undirected_graph: "Optional[nx.MultiGraph]" = None,
     ) -> tuple:
         """Resolve region string with strand info for one connected component."""
         gname = f"ec{idx}"
-        # Restrict first, then drop direction as a view.  Converting the whole
-        # breakpoint graph once per component made this loop O(components x
-        # full_graph): 19,125 components on GlioSarc_P01_Tumor took 110 minutes.
-        # Inducing on a node set and dropping direction commute, and both
-        # selections iterate nodes in G's insertion order, so the region string
-        # is unchanged.  Downstream cleanup copies before mutating.
-        subgraph = G.subgraph(comp_nodes).to_undirected(as_view=True)
+        # The undirected conversion is passed in, built once for the whole
+        # loop; converting per component was O(components x full_graph).
+        if undirected_graph is None:
+            undirected_graph = G.to_undirected()
+        subgraph = SplitReadsCore._undirected_component(undirected_graph, comp_nodes)
         nodes = list(subgraph.nodes())
 
         regions, num_nodes, can_be_solved, contain_selfloop, is_cyclic = chk_circular_subgraph(
@@ -1207,20 +1222,28 @@ class SplitReadsCore:
         # for each of 24,629 nodes on GlioSarc_P01_Tumor - the same quadratic
         # shape already removed from ecc_dedup.  groupby().indices keeps each
         # group's rows in table order, so the per-node slices are identical.
-        stats_by_mergeid: dict[str, tuple[int, list[str]]] = {}
+        stats_by_mergeid: dict[Any, tuple[int, list[str]]] = {}
         if not read_merged_ins_df.empty:
-            spans = (
-                read_merged_ins_df["q_end"].astype(int)
-                - read_merged_ins_df["q_start"].astype(int)
-            )
-            readids = read_merged_ins_df["readid"].astype(str)
-            for mergeid, positions in read_merged_ins_df.groupby(
-                "mergeid", sort=False
-            ).indices.items():
-                stats_by_mergeid[str(mergeid)] = (
-                    int(spans.iloc[positions].sum()),
-                    readids.iloc[positions].tolist(),
-                )
+            # Restrict to the mergeids the region strings actually name: the
+            # per-node scan only ever converted those rows, so an unusable
+            # value elsewhere in the table must stay unusable rather than fail
+            # the whole conversion.  The group key is left as-is - stringifying
+            # it would let a numeric mergeid column match a textual node name
+            # that `df["mergeid"] == node` never matched.
+            referenced = {
+                node.rsplit("_", 1)[0] if "_" in node else node
+                for regions in df_graph_summary["regions"]
+                for node in str(regions).split(",")
+            }
+            wanted = read_merged_ins_df[read_merged_ins_df["mergeid"].isin(referenced)]
+            if not wanted.empty:
+                spans = wanted["q_end"].astype(int) - wanted["q_start"].astype(int)
+                readids = wanted["readid"].astype(str)
+                for mergeid, positions in wanted.groupby("mergeid", sort=False).indices.items():
+                    stats_by_mergeid[mergeid] = (
+                        int(spans.iloc[positions].sum()),
+                        readids.iloc[positions].tolist(),
+                    )
 
         results = []
         for _, value in df_graph_summary.iterrows():

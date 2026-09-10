@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -25,6 +25,17 @@ def _number(value: Any) -> float | None:
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _iter_rows(df: pd.DataFrame) -> Iterator[Any]:
+    """Yield one mapping per row without materialising them all."""
+    if df.columns.has_duplicates:
+        for _, row in df.iterrows():
+            yield row
+        return
+    columns = list(df.columns)
+    for values in zip(*(df[column] for column in columns)):
+        yield dict(zip(columns, values))
+
+
 def collect_support(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     """Union support by candidate, counting its repeated segment rows only once.
 
@@ -42,9 +53,13 @@ def collect_support(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
         support[key] = entry
 
     # Every access below is `row.get(...)`, which a plain dict answers the same
-    # way.  iterrows would build one object Series per row, and this runs about
-    # 1.1 million times from each of ecc_dedup and umc_process.
-    for row in df.to_dict("records"):
+    # way, and iterrows builds one object Series per row - this runs about 1.1
+    # million times from each of ecc_dedup and umc_process.  Rows are zipped
+    # lazily rather than materialised with to_dict("records"), which would
+    # hold a dict per row for the whole frame.  A duplicated column label makes
+    # df[label] a frame rather than a Series, so those frames keep the original
+    # iterrows behaviour instead of silently resolving to the last column.
+    for row in _iter_rows(df):
         encoded = row.get("candidate_support")
         if isinstance(encoded, str) and encoded.strip():
             for key, item in json.loads(encoded).items():

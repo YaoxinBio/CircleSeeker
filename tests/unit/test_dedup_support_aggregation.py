@@ -141,3 +141,41 @@ class TestSupportCollectionAvoidsIterrows:
             [dict(candidate_support='{"k1": {"read": "r1", "copy_number": 4}}', reads="ignored")]
         )
         assert collect_support(df) == {"k1": {"read": "r1", "copy_number": 4.0}}
+
+
+class TestSupportCollectionStreamsRows:
+    """Rows must be produced lazily, and duplicate column names must not
+    silently change meaning.
+
+    `to_dict("records")` materialises one dict per row for the whole frame -
+    a GB-scale spike at 1.1 million rows, which is the opposite of the point.
+    It also resolves a duplicated label to the last column, whereas
+    `Series.get` on an iterrows row returns a Series that every isinstance
+    check in this function rejects.
+    """
+
+    def test_rows_are_not_materialised_at_once(self, monkeypatch):
+        from circleseeker.utils.read_support import collect_support
+
+        def boom(self, *args, **kwargs):
+            raise AssertionError("materialised every row before iterating")
+
+        monkeypatch.setattr(pd.DataFrame, "to_dict", boom)
+        df = pd.DataFrame(
+            [dict(reads=f"r{i}", copy_number=i, eccDNA_id=f"U{i}") for i in range(5)]
+        )
+        assert len(collect_support(df)) == 5
+
+    def test_duplicate_labels_behave_like_the_series_lookup(self):
+        from circleseeker.utils.read_support import collect_support
+
+        df = pd.DataFrame([["x;y", "a", 3]], columns=["reads", "reads", "copy_number"])
+        # `reads` resolves to a 2-column frame; the old Series.get returned a
+        # Series, which _names() rejected, yielding no support at all.
+        assert collect_support(df) == {}
+
+    def test_single_labels_still_collect(self):
+        from circleseeker.utils.read_support import collect_support
+
+        df = pd.DataFrame([dict(reads="x;y", per_read_copy_number="2;3", query_id="q")])
+        assert set(collect_support(df)) == {"q::x", "q::y"}

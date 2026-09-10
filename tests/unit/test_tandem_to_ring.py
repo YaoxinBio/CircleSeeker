@@ -4,6 +4,8 @@ import sys
 import pandas as pd
 import pytest
 from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -566,3 +568,41 @@ class TestCircularSequencesAreStreamed:
 
         assert [r.id for r in records] == ["r1|circular", "r2|circular", "r3|circular"]
         assert [str(r.seq) for r in records] == ["ACGTACGT", "TTGGCCTTGGCC", "AA"]
+
+
+class TestFastaIsWrittenAtomically:
+    """A failure mid-stream must not leave a plausible-looking FASTA.
+
+    Materialising the records first meant a bad row raised before the file was
+    created. Streaming moved the failure to the middle of writing, so a
+    truncated file with a valid last record would be left behind for whoever
+    inspects the run directory.
+    """
+
+    @staticmethod
+    def _module(tmp_path):
+        return TandemToRing(tmp_path / "in.txt", tmp_path / "out.csv", tmp_path / "out.fasta")
+
+    def test_no_file_is_left_when_a_record_fails(self, tmp_path):
+        module = self._module(tmp_path)
+        out = tmp_path / "circular.fasta"
+
+        def records():
+            yield SeqRecord(Seq("ACGT"), id="r1|circular", description="")
+            raise ValueError("bad consSeq")
+
+        with pytest.raises(ValueError):
+            module.write_fasta(records(), out)
+
+        assert not out.exists()
+        assert list(tmp_path.glob("*.partial")) == []
+
+    def test_successful_write_still_produces_the_file(self, tmp_path):
+        module = self._module(tmp_path)
+        out = tmp_path / "ok.fasta"
+        frame = pd.DataFrame({"unique_id": ["r1"], "consSeq": ["ACGT"]})
+
+        module.write_fasta(module.iter_circular_sequences(frame), out)
+
+        assert out.read_text() == ">r1|circular\nACGTACGT\n"
+        assert list(tmp_path.glob("*.partial")) == []

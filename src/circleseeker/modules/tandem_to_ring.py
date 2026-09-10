@@ -444,8 +444,20 @@ class TandemToRing:
         return list(self.iter_circular_sequences(df_main))
 
     def write_fasta(self, sequences: Iterable[SeqRecord], output_file: Path) -> None:
-        """Write sequences to FASTA file"""
-        SeqIO.write(sequences, output_file, "fasta")
+        """Write sequences to FASTA file.
+
+        Written to a sidecar first: streaming records means a bad row raises
+        part-way through, and a truncated file whose last record is well-formed
+        is indistinguishable from a complete one on inspection.
+        """
+        output_file = Path(output_file)
+        partial = output_file.with_name(output_file.name + ".partial")
+        try:
+            SeqIO.write(sequences, partial, "fasta")
+            partial.replace(output_file)
+        finally:
+            if partial.exists():
+                partial.unlink()
 
     def create_readname_classification(self, df_main: pd.DataFrame) -> pd.DataFrame:
         """

@@ -917,6 +917,15 @@ class TestFastaStatsAreCountedInBlocks:
         "header_only": ">a\n>b\n>c\n",
         "empty": "",
         "sequence_before_first_header": "ACGT\n>a\nTTTT\n",
+        # str.strip() and byte counting part ways on anything non-ASCII or on
+        # the exotic whitespace str.isspace() accepts, so the scanner has to
+        # decline these rather than count them.
+        "utf8_multibyte_sequence": ">a\nACGT\u00e9\n",
+        "byte_order_mark": "\ufeff>a\nACGTACGT\n",
+        "form_feed": ">a\nACGT\x0c\n>b\nTT\n",
+        "vertical_tab": ">a\nACGT\x0b\n",
+        "nbsp_tail": ">a\nACGT\u00a0\n",
+        "file_separator": ">a\nACGT\x1c\n",
     }
 
     @pytest.mark.parametrize("name", sorted(CASES))
@@ -929,8 +938,31 @@ class TestFastaStatsAreCountedInBlocks:
         in_blocks = summary._scan_fasta_in_blocks(fasta)
 
         if in_blocks is None:
-            pytest.skip("block scanner declined this input; fallback covers it")
+            # Declining is a valid answer, but then the caller's own fallback
+            # has to reproduce the counts - assert that rather than skipping.
+            assert summary.process_fasta(fasta)["total_sequences"] == by_line[0], name
+            assert summary.process_fasta(fasta)["total_length"] == by_line[1], name
+            return
         assert in_blocks == by_line, name
+
+    @pytest.mark.parametrize("name", sorted(CASES))
+    def test_declined_input_falls_back_to_each_caller_own_semantics(self, tmp_path, name):
+        """The two callers disagree on a header with leading blanks.
+
+        _scan_fasta_by_line strips before testing for '>'; _count_reads_by_line
+        does not.  The block scanner must decline anything where that matters,
+        so each caller keeps its own answer.
+        """
+        fasta = tmp_path / f"{name}.fasta"
+        fasta.write_text(self.CASES[name], newline="")
+        summary = self._summary(tmp_path)
+
+        if summary._scan_fasta_in_blocks(fasta) is not None:
+            return
+        assert summary._count_reads_by_line(fasta) == summary._count_reads_by_line(fasta)
+        stats = summary.collect_read_statistics(fasta, tmp_path / "missing.csv")
+        expected = summary._count_reads_by_line(fasta)
+        assert (stats["total_reads"], stats["total_length"]) == expected
 
     def test_declined_input_still_reports_via_fallback(self, tmp_path):
         fasta = tmp_path / "crlf.fasta"
@@ -1125,3 +1157,36 @@ class TestDeclinedScanIsNotRepeated:
         # Same path, different content: the size/mtime key must miss.
         fasta.write_text(">a\nACGT\n>b\nTTTT\n", newline="")
         assert summary._scan_fasta_in_blocks(fasta) == (2, 8)
+
+
+class TestScanCacheKeyIsSpecific:
+    """A same-size rewrite must not serve a stale count.
+
+    The key was (path, size, mtime_ns). mtime granularity is 1-2 s on HFS+,
+    FAT and some network mounts, so rewriting a file to the same length within
+    that window would hit the cache. Inode and ctime make that observable.
+    """
+
+    @staticmethod
+    def _summary(tmp_path):
+        from circleseeker.modules.ecc_summary import EccSummary
+
+        return EccSummary(sample_name="t", output_dir=tmp_path)
+
+    def test_same_size_rewrite_with_restored_mtime_is_rescanned(self, tmp_path):
+        import os
+
+        fasta = tmp_path / "f.fasta"
+        fasta.write_text(">a\nACGT\n", newline="")
+        summary = self._summary(tmp_path)
+        first = summary._scan_fasta_in_blocks(fasta)
+        before = fasta.stat()
+
+        # same byte count, different content, mtime forced back
+        fasta.write_text(">ab\nACG\n", newline="")
+        os.utime(fasta, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert fasta.stat().st_size == before.st_size
+
+        second = summary._scan_fasta_in_blocks(fasta)
+        assert second != first
+        assert second == summary._scan_fasta_by_line(fasta)

@@ -23,6 +23,11 @@ from circleseeker.__version__ import __version__
 import sys
 
 
+# Bytes the block scanner is willing to count: printable ASCII plus tab and
+# newline.  Everything else is handed back to the line-by-line readers.
+_NON_PLAIN_ASCII = re.compile(rb"[^\x09\x0a\x20-\x7e]")
+
+
 class EccSummary:
     """Generate comprehensive eccDNA analysis reports."""
 
@@ -204,7 +209,16 @@ class EccSummary:
         semantics: carriage returns, blank lines, or leading/trailing blanks.
         """
         stat = path.stat()
-        key = (str(path), stat.st_size, stat.st_mtime_ns, block_size)
+        # mtime granularity is 1-2 s on some filesystems, so size and mtime
+        # alone can miss a same-size rewrite; inode and ctime close that gap.
+        key = (
+            str(path),
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+            stat.st_ino,
+            block_size,
+        )
         cached = getattr(self, "_fasta_scan_cache", None)
         if cached is not None and cached[0] == key:
             hit: tuple[int, int] = cached[1]
@@ -241,9 +255,15 @@ class EccSummary:
                 # any other, and carries the previous block's line break across
                 # the boundary so patterns spanning it are still seen.
                 scan = b"\n" + body
+                # Byte counting only reproduces str.strip() over plain ASCII.
+                # Anything else - multibyte UTF-8, a BOM, NBSP, or the exotic
+                # whitespace str.isspace() accepts (\x0b \x0c \x1c-\x1f) -
+                # counts differently as bytes than as characters, and invalid
+                # UTF-8 makes the text reader raise where this one would not.
+                if _NON_PLAIN_ASCII.search(scan):
+                    return remember(None)
                 if (
-                    b"\r" in scan
-                    or b"\n\n" in scan
+                    b"\n\n" in scan
                     or b"\n " in scan
                     or b"\n\t" in scan
                     or b" \n" in scan
@@ -260,7 +280,7 @@ class EccSummary:
 
         if tail:
             if (
-                b"\r" in tail
+                _NON_PLAIN_ASCII.search(tail)
                 or tail[:1] in (b" ", b"\t")
                 or tail[-1:] in (b" ", b"\t")
             ):

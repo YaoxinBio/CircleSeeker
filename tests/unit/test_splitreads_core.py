@@ -542,22 +542,24 @@ class TestComponentResolutionDoesNotCopyTheWholeGraph:
     on a node set and dropping edge direction commute.
     """
 
-    def test_component_regions_do_not_convert_the_complete_graph(self):
-        class FailOnDeepcopy:
-            def __deepcopy__(self, _memo):
-                pytest.fail("component resolution deep-copied graph metadata")
+    def test_component_regions_reuse_the_prebuilt_conversion(self):
+        """Given the hoisted graph, a component must not convert G again.
 
+        The loop builds one undirected graph and induces every component from
+        it.  Converting per component was O(components x full_graph): 19,125
+        components on GlioSarc_P01_Tumor spent 110 minutes here.
+        """
         graph = nx.MultiDiGraph()
         graph.add_edge("target", "target")
         for index in range(100):
             node = f"unrelated_{index}"
             graph.add_edge(node, node)
-        graph.graph["large_read_phasing_index"] = FailOnDeepcopy()
+
+        undirected = graph.to_undirected()
 
         def fail_full_graph_conversion(*_args, **_kwargs):
-            pytest.fail("component resolution converted the complete graph")
+            pytest.fail("component resolution converted the complete graph again")
 
-        # An instance override is not inherited by the induced subgraph view.
         graph.to_undirected = fail_full_graph_conversion
 
         result = SplitReadsCore._resolve_component_regions(
@@ -566,19 +568,62 @@ class TestComponentResolutionDoesNotCopyTheWholeGraph:
             graph,
             {("target", "target"): {"+_+"}},
             {"target": "+"},
+            undirected_graph=undirected,
         )
 
         assert result[1] == "target_+"
         assert result[4] is True
         assert result[5] is True
 
-    @staticmethod
-    def _reference_resolution(idx, comp_nodes, G, dict_pair_strand, dict_majority_strand):
-        """The pre-optimization subgraph selection, kept only for comparison."""
-        original = SplitReadsCore._resolve_component_regions.__func__
-        source = original.__code__
-        assert source is not None  # guard against silent signature drift
-        return original(idx, comp_nodes, G, dict_pair_strand, dict_majority_strand)
+    def test_selection_equals_the_per_component_conversion(self):
+        """The hoisted selection must return what the old per-component one did."""
+        graph = nx.MultiDiGraph()
+        for left, right in [
+            ("a", "b"), ("b", "c"), ("c", "a"), ("b", "d"), ("d", "a"),
+        ]:
+            graph.add_edge(left, right, weight=3)
+        pair_strand = {}
+        for left, right in graph.edges():
+            pair_strand[(left, right)] = {"+_+"}
+            pair_strand[(right, left)] = {"+_+"}
+        majority = {n: "+" for n in graph.nodes()}
+        undirected = graph.to_undirected()
+
+        for component in nx.connected_components(undirected):
+            legacy = SplitReadsCore._resolve_component_regions(
+                3, component, graph, pair_strand, majority
+            )
+            hoisted = SplitReadsCore._resolve_component_regions(
+                3, component, graph, pair_strand, majority, undirected_graph=undirected
+            )
+            assert tuple(legacy) == tuple(hoisted)
+
+    def test_adjacency_order_matches_a_materialized_conversion(self):
+        """Adjacency order, not just node order, feeds cycle_basis.
+
+        An `as_view=True` conversion iterates neighbours through
+        UnionAtlas.__iter__, i.e. `set(succ) | set(pred)` - set order, not edge
+        insertion order.  cycle_basis walks that adjacency, its first cycle
+        becomes the region string, and that string is written to
+        eccDNA_final.txt.  So the selection has to be a materialized undirected
+        graph, hoisted out of the component loop rather than made per component.
+        """
+        graph = nx.MultiDiGraph()
+        chord_edges = [
+            ("n1", "n2"), ("n2", "n3"), ("n3", "n4"),
+            ("n4", "n5"), ("n5", "n6"), ("n6", "n1"),
+            ("n2", "n5"),   # chord: n2 and n5 now have degree 3
+        ]
+        for left, right in chord_edges:
+            graph.add_edge(left, right, weight=3)
+        component = set(graph.nodes())
+
+        materialized = graph.to_undirected().subgraph(component)
+        hoisted = SplitReadsCore._undirected_component(graph.to_undirected(), component)
+
+        for node in sorted(component):
+            assert list(hoisted.adj[node]) == list(materialized.adj[node]), node
+        assert nx.cycle_basis(nx.Graph(hoisted)) == nx.cycle_basis(nx.Graph(materialized))
 
     def test_region_order_matches_whole_graph_conversion(self):
         """Node order feeds the region string, so both selections must agree."""
@@ -604,8 +649,10 @@ class TestComponentResolutionDoesNotCopyTheWholeGraph:
                 7, component, graph, pair_strand, majority
             )
             legacy_nodes = list(graph.to_undirected().subgraph(component).nodes())
-            view_nodes = list(graph.subgraph(component).to_undirected(as_view=True).nodes())
-            assert legacy_nodes == view_nodes
+            hoisted_nodes = list(
+                SplitReadsCore._undirected_component(graph.to_undirected(), component).nodes()
+            )
+            assert legacy_nodes == hoisted_nodes
             assert optimized[2] == len(component)
 
 
@@ -661,10 +708,14 @@ class TestEccdnaStatsIndexesTheReadTable:
         Tally.calls = 0
         SplitReadsCore._collect_eccdna_stats(summary, read_table)
 
-        # One full pass over the table is acceptable; one pass per node is not.
-        assert Tally.calls <= len(read_table), (
-            f"read table compared {Tally.calls} times for {len(read_table)} rows "
-            f"and {len(mergeids)} nodes"
+        # Building the index hashes the column a couple of times (isin, then
+        # groupby), so the count is a small multiple of the row count and its
+        # exact value moves with PYTHONHASHSEED. What must not happen is the
+        # per-node scan, which is rows x nodes.
+        per_node_scan = len(read_table) * len(mergeids)
+        assert Tally.calls < per_node_scan / 3, (
+            f"{Tally.calls} comparisons for {len(read_table)} rows and "
+            f"{len(mergeids)} nodes; a per-node scan would be {per_node_scan}"
         )
 
     def test_stats_values_match_the_per_node_scan(self):
@@ -788,3 +839,52 @@ class TestCycleDetectionAvoidsDirectedRoundTrip:
 
         assert round_trip == simple
         assert list(nx.DiGraph(graph).to_undirected().nodes()) == list(nx.Graph(graph).nodes())
+
+
+class TestStatsIndexKeepsTheOldMatchingRules:
+    """Indexing must not widen what the per-node scan used to match.
+
+    The old loop only ever touched rows whose mergeid appeared in a region
+    string, and compared them as written. Building the index over the whole
+    table converts every row - including ones the old code never looked at -
+    and stringifying the group key makes a numeric mergeid column match a
+    textual node name that previously never matched.
+    """
+
+    @staticmethod
+    def _summary():
+        return pd.DataFrame(
+            [{"id": "ec1", "regions": "chr1_100_200_+", "num_nodes": 1, "is_cyclic": True}]
+        )
+
+    def test_unreferenced_rows_are_not_converted(self):
+        table = pd.DataFrame(
+            {
+                "mergeid": ["chr1_100_200", "chr9_0_0"],
+                "readid": ["r1", "r2"],
+                "q_start": ["0", "not-a-number"],   # only the second is unusable
+                "q_end": ["7", "also-bad"],
+            }
+        )
+
+        results = SplitReadsCore._collect_eccdna_stats(self._summary(), table)
+
+        assert results[0][6] == 7      # totalbase from the referenced row only
+        assert results[0][5] == 1
+
+    def test_numeric_mergeid_column_still_does_not_match_a_text_node(self):
+        table = pd.DataFrame(
+            {
+                "mergeid": [100, 200],           # numeric, as bedtools may infer
+                "readid": ["r1", "r2"],
+                "q_start": [0, 0],
+                "q_end": [7, 7],
+            }
+        )
+
+        results = SplitReadsCore._collect_eccdna_stats(self._summary(), table)
+
+        # "chr1_100_200" is not any of these keys, so nothing is contributed -
+        # exactly what `df["mergeid"] == "chr1_100_200"` produced.
+        assert results[0][6] == 0
+        assert results[0][5] == 0
