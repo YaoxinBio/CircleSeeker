@@ -1029,6 +1029,22 @@ class TestLociClusteringFromArrays:
         assert {lid: [labels[p] for p in pos] for lid, pos in got.items()} == clf._cluster_loci(group)
 
 
+def _span_over_positions(frame, positions):
+    """The reductions classify_uecc_mecc runs inline over a locus' positions.
+
+    The production code does not call a helper for these - it keeps them inline
+    because the mapq and the coordinate reductions need different fallbacks when
+    a column is missing. This mirrors the arithmetic so the property that made
+    the frame slice unnecessary stays under test.
+    """
+    return (
+        int(np.nanmax(frame["mapq"].to_numpy()[positions])),
+        str(frame[ColumnStandard.CHR].to_numpy()[positions][0]),
+        int(np.nanmin(frame[ColumnStandard.START0].to_numpy()[positions])),
+        int(np.nanmax(frame[ColumnStandard.END0].to_numpy()[positions])),
+    )
+
+
 class TestLocusStatsFromArrays:
     """The Uecc branch reads six values off a locus; none needs a frame slice.
 
@@ -1055,13 +1071,7 @@ class TestLocusStatsFromArrays:
         frame = self._frame()
         positions = [0, 1, 2]
 
-        got = clf._locus_span_from_arrays(
-            frame["mapq"].to_numpy(),
-            frame[ColumnStandard.CHR].to_numpy(),
-            frame[ColumnStandard.START0].to_numpy(),
-            frame[ColumnStandard.END0].to_numpy(),
-            positions,
-        )
+        got = _span_over_positions(frame, positions)
         assert got == (
             int(frame["mapq"].max()),
             str(frame[ColumnStandard.CHR].iloc[0]),
@@ -1093,11 +1103,7 @@ class TestLocusStatsFromArrays:
             }
         )
         positions = [0, 1, 2]
-        got = clf._locus_span_from_arrays(
-            frame["mapq"].to_numpy(), frame[ColumnStandard.CHR].to_numpy(),
-            frame[ColumnStandard.START0].to_numpy(), frame[ColumnStandard.END0].to_numpy(),
-            positions,
-        )
+        got = _span_over_positions(frame, positions)
         assert got == (
             int(frame["mapq"].max()), str(frame[ColumnStandard.CHR].iloc[0]),
             int(frame[ColumnStandard.START0].min()), int(frame[ColumnStandard.END0].max()),
@@ -1111,11 +1117,7 @@ class TestLocusStatsFromArrays:
         positions = [1, 2]
         sliced = frame.iloc[positions]
 
-        got = clf._locus_span_from_arrays(
-            frame["mapq"].to_numpy(), frame[ColumnStandard.CHR].to_numpy(),
-            frame[ColumnStandard.START0].to_numpy(), frame[ColumnStandard.END0].to_numpy(),
-            positions,
-        )
+        got = _span_over_positions(frame, positions)
         assert got == (
             int(sliced["mapq"].max()), str(sliced[ColumnStandard.CHR].iloc[0]),
             int(sliced[ColumnStandard.START0].min()), int(sliced[ColumnStandard.END0].max()),

@@ -602,22 +602,6 @@ class UMeccClassifier:
         return mapq_best, mapq_min, id_best, id_min
 
     @staticmethod
-    def _locus_span_from_arrays(
-        mapq_vals: Any, chrom_vals: Any, start_vals: Any, end_vals: Any, positions: Any
-    ) -> tuple[int, str, int, int]:
-        """Best MAPQ, chromosome, and genomic span of one locus.
-
-        The Uecc branch read these off a `group.loc[idxs]` slice, taken for
-        every classified query. np.nanmax/nanmin skip NaN exactly as pandas
-        max()/min() do, and the chromosome is the locus's first row either way.
-        """
-        best_mapq = int(np.nanmax(mapq_vals[positions]))
-        chrom = str(chrom_vals[positions][0])
-        start0 = int(np.nanmin(start_vals[positions]))
-        end0 = int(np.nanmax(end_vals[positions]))
-        return best_mapq, chrom, start0, end0
-
-    @staticmethod
     def _argmax_position(values: Any, positions: Any) -> int:
         """Position of the locus's largest value, first one on a tie.
 
