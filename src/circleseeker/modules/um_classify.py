@@ -601,6 +601,83 @@ class UMeccClassifier:
             id_min = 0.0
         return mapq_best, mapq_min, id_best, id_min
 
+    def _cluster_loci_from_arrays(
+        self,
+        labels: list,
+        chrom_vals: Any,
+        strand_vals: Any,
+        start_vals: Any,
+        end_vals: Any,
+    ) -> dict[int, list[int]]:
+        """Cluster one query's alignments into loci, over arrays.
+
+        Same result as _cluster_loci, addressed by position instead of index
+        label. Two orderings are preserved deliberately:
+
+        - the inner (chr, strand) grouping keeps first-appearance order, as
+          `groupby(..., sort=False)` did, because union() makes the first
+          member's root win and a different order would pick a different root;
+        - loci are renumbered by `str()` of the root's index LABEL, not its
+          position, because that ordering decides which locus is reported first
+          when coverages tie.
+        """
+        n = len(labels)
+        if n == 0:
+            return {}
+
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        buckets: dict[tuple, list[int]] = {}
+        for i in range(n):
+            buckets.setdefault((chrom_vals[i], strand_vals[i]), []).append(i)
+
+        pos_tol = int(self.pos_tol_bp)
+        theta = float(self.theta_locus)
+        for members in buckets.values():
+            if len(members) <= 1:
+                continue
+            for a_i in range(len(members)):
+                ia = members[a_i]
+                start_a = int(start_vals[ia])
+                end_a = int(end_vals[ia])
+                for b_i in range(a_i + 1, len(members)):
+                    ib = members[b_i]
+                    start_b = int(start_vals[ib])
+                    end_b = int(end_vals[ib])
+
+                    if abs(start_a - start_b) <= pos_tol and abs(end_a - end_b) <= pos_tol:
+                        union(ia, ib)
+                        continue
+
+                    ov = max(0, min(end_a, end_b) - max(start_a, start_b))
+                    min_len = min(max(0, end_a - start_a), max(0, end_b - start_b))
+                    if min_len <= 0:
+                        continue
+                    if (ov / float(min_len)) >= theta:
+                        union(ia, ib)
+
+        clusters: dict[int, list[int]] = {}
+        for i in range(n):
+            clusters.setdefault(find(i), []).append(i)
+
+        relabeled: dict[int, list[int]] = {}
+        for locus_id, root in enumerate(
+            sorted(clusters.keys(), key=lambda pos: str(labels[pos]))
+        ):
+            relabeled[locus_id] = clusters[root]
+        return relabeled
+
     def _cluster_loci(self, group: pd.DataFrame) -> dict[int, list[int]]:
         """Cluster alignments into loci for a single query."""
         if group.empty:
@@ -867,23 +944,34 @@ class UMeccClassifier:
             if cons_len <= 0:
                 continue
 
-            loci = self._cluster_loci(group)
-            if not loci:
+            # Cluster over arrays: the frame version ran one more pandas
+            # groupby([chr, strand]) per query, which measures 63.95s against
+            # 2.29s for dict bucketing on a 78,606-group subset.
+            group_labels = list(group.index)
+            loci_positions = self._cluster_loci_from_arrays(
+                group_labels,
+                group[ColumnStandard.CHR].to_numpy(),
+                group[ColumnStandard.STRAND].to_numpy(),
+                group[ColumnStandard.START0].to_numpy(),
+                group[ColumnStandard.END0].to_numpy(),
+            )
+            if not loci_positions:
                 continue
+            loci = {
+                lid: [group_labels[pos] for pos in positions]
+                for lid, positions in loci_positions.items()
+            }
 
             # Pull the four columns the per-locus work reads, once per query, and
             # address loci by position from here on. `group.loc[idxs]` used to
             # materialise every column of the group for each locus, twice over
             # (coverage, then evidence).
-            position_of = {label: i for i, label in enumerate(group.index)}
+            position_of = {label: i for i, label in enumerate(group_labels)}
             q_start_all = group["q_start"].to_numpy() if "q_start" in group.columns else None
             q_end_all = group["q_end"].to_numpy() if "q_end" in group.columns else None
             mapq_all = group["mapq"].to_numpy() if "mapq" in group.columns else None
             identity_all = group["identity"].to_numpy() if "identity" in group.columns else None
-            locus_positions = {
-                lid: [position_of[label] for label in idxs if label in position_of]
-                for lid, idxs in loci.items()
-            }
+            locus_positions = loci_positions
 
             locus_cov: dict[int, float] = {}
             for locus_id, idxs in loci.items():

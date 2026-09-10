@@ -925,3 +925,83 @@ class TestPerLocusWorkAvoidsFrameSlices:
 
         clf = UMeccClassifier()
         assert clf._locus_evidence_from_arrays(np.array([]), np.array([])) == (0, 0, 0.0, 0.0)
+
+
+class TestLociClusteringFromArrays:
+    """Clustering must not need a DataFrame, nor an inner groupby.
+
+    _cluster_loci took the group frame, ran `groupby([chr, strand])` inside it
+    - one more pandas groupby per query, millions of them - and keyed union-find
+    on index labels. The same work over plain arrays is the last piece needed to
+    drop DataFrame slicing from the per-query loop; measured separately, just
+    iterating groupby and touching three columns costs 7.09s on a 220k-row / 78k
+    group subset, against 0.29s for sorted boundary slices (24x).
+
+    Two orderings are load-bearing and must survive: the inner grouping is
+    first-appearance order (union order decides which member becomes the root),
+    and loci are renumbered by `str()` of the root's index LABEL, which in
+    coverage ties decides which locus wins.
+    """
+
+    @staticmethod
+    def _classifier():
+        return UMeccClassifier(pos_tol_bp=50, theta_locus=0.95)
+
+    @staticmethod
+    def _group(index):
+        return pd.DataFrame(
+            {
+                ColumnStandard.CHR: ["chr1", "chr1", "chr2", "chr1", "chr2"],
+                ColumnStandard.STRAND: ["+", "+", "-", "-", "-"],
+                ColumnStandard.START0: [1000, 1020, 5000, 8000, 5010],
+                ColumnStandard.END0: [2000, 2010, 6000, 9000, 6020],
+            },
+            index=index,
+        )
+
+    def _compare(self, index):
+        clf = self._classifier()
+        group = self._group(index)
+        expected = clf._cluster_loci(group)
+
+        labels = list(group.index)
+        got = clf._cluster_loci_from_arrays(
+            labels,
+            group[ColumnStandard.CHR].to_numpy(),
+            group[ColumnStandard.STRAND].to_numpy(),
+            group[ColumnStandard.START0].to_numpy(),
+            group[ColumnStandard.END0].to_numpy(),
+        )
+        # array version returns positions; map back to labels to compare
+        as_labels = {lid: [labels[p] for p in pos] for lid, pos in got.items()}
+        assert as_labels == expected, (as_labels, expected)
+
+    def test_matches_the_frame_version_with_plain_indices(self):
+        self._compare([0, 1, 2, 3, 4])
+
+    def test_matches_with_labels_whose_string_order_differs(self):
+        # str() ordering puts "10" before "9"; positional ordering would not
+        self._compare([9, 10, 100, 11, 2])
+
+    def test_matches_with_non_contiguous_labels(self):
+        self._compare([57, 3, 900, 12, 41])
+
+    def test_empty_group(self):
+        clf = self._classifier()
+        import numpy as np
+
+        assert clf._cluster_loci_from_arrays([], np.array([]), np.array([]),
+                                             np.array([]), np.array([])) == {}
+
+    def test_single_alignment(self):
+        clf = self._classifier()
+        group = self._group([0, 1, 2, 3, 4]).iloc[:1]
+        labels = list(group.index)
+        got = clf._cluster_loci_from_arrays(
+            labels,
+            group[ColumnStandard.CHR].to_numpy(),
+            group[ColumnStandard.STRAND].to_numpy(),
+            group[ColumnStandard.START0].to_numpy(),
+            group[ColumnStandard.END0].to_numpy(),
+        )
+        assert {lid: [labels[p] for p in pos] for lid, pos in got.items()} == clf._cluster_loci(group)
