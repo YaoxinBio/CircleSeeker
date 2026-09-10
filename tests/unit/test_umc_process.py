@@ -1085,3 +1085,90 @@ class TestNumberingWritesByPosition:
 
         assert result.loc[0, "eSeq"] == result.loc[2, "eSeq"] != ""
         assert result.loc[1, "eSeq"] != result.loc[0, "eSeq"]
+
+
+class TestLocationClusteringPrecomputesAggregates:
+    """Per-group pandas calls must not be made one group at a time.
+
+    cluster_by_location ran `group[col].sum()`, `group[col].dropna().mean()`
+    and an axis=1 apply for the signature - fable measured 0.85 ms per group
+    against >=1,109,705 Uecc location signatures, 16-25 minutes. The aggregates
+    are computed once; the representative row and its dtypes are untouched.
+    """
+
+    @staticmethod
+    def _processor():
+        return UeccProcessor(
+            TestRepeatedKeyLookupsAreIndexed._Library({}), UMCProcessConfig()
+        )
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "query_id": ["q1", "q2", "q3", "q4", "q5"],
+                "chr": ["chr1", "chr1", "chr2", "chr2", "chr3"],
+                "start0": [100, 100, 500, 500, 900],
+                "end0": [200, 200, 600, 600, 950],
+                "copy_number": [2.0, 3.0, 1.0, float("nan"), 4.0],
+                "Gap_Percentage": [1.0, 3.0, float("nan"), float("nan"), 2.0],
+                "match_degree": [99.0, 97.0, 50.0, 50.0, 98.0],
+                "reads": ["a;b", "b;c", "d", "", "e"],
+            }
+        )
+
+    def test_signature_matches_the_row_wise_format(self):
+        frame = self._frame()
+        # what the axis=1 apply produced, keyed by the coordinates it saw
+        expected = {
+            f"{row['chr']}:{row['start0']}-{row['end0']}"
+            for _, row in frame.iterrows()
+        }
+
+        result = self._processor().cluster_by_location(frame.copy())
+
+        assert set(result["location_signature"]) == expected
+        for _, row in result.iterrows():
+            assert row["location_signature"] == (
+                f"{row['chr']}:{row['start0']}-{row['end0']}"
+            )
+
+    def test_aggregates_match_the_per_group_computation(self):
+        frame = self._frame()
+        result = self._processor().cluster_by_location(frame.copy())
+
+        first = result[result["location_signature"] == "chr1:100-200"].iloc[0]
+        assert first["copy_number"] == 5.0            # 2 + 3
+        assert first["Gap_Percentage"] == 2.0         # mean of 1 and 3
+        assert first["match_degree"] == 98.0          # 100 - 2
+        assert first["cluster_size"] == 2
+        assert first["cluster_members"] == "q1;q2"
+        assert first["reads"] == "a;b;c"              # order preserved, deduped
+
+    def test_all_nan_gap_leaves_the_representative_value(self):
+        frame = self._frame()
+        result = self._processor().cluster_by_location(frame.copy())
+
+        second = result[result["location_signature"] == "chr2:500-600"].iloc[0]
+        # every Gap_Percentage in this group is NaN, so the representative's own
+        # values survive untouched
+        assert pd.isna(second["Gap_Percentage"])
+        assert second["match_degree"] == 50.0
+        assert second["copy_number"] == 1.0           # sum skips NaN
+
+    def test_signature_survives_non_integer_coordinates(self):
+        frame = pd.DataFrame(
+            {
+                "query_id": ["q1"],
+                "chr": ["chr1"],
+                "start0": [float("nan")],
+                "end0": [200.5],
+                "copy_number": [1.0],
+            }
+        )
+        expected = frame.apply(
+            lambda row: f"{row['chr']}:{row['start0']}-{row['end0']}", axis=1
+        ).iloc[0]
+
+        result = self._processor().cluster_by_location(frame.copy())
+        assert result["location_signature"].iloc[0] == expected

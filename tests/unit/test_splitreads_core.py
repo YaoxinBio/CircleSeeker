@@ -598,32 +598,35 @@ class TestComponentResolutionDoesNotCopyTheWholeGraph:
             )
             assert tuple(legacy) == tuple(hoisted)
 
-    def test_adjacency_order_matches_a_materialized_conversion(self):
-        """Adjacency order, not just node order, feeds cycle_basis.
+    def test_component_selection_is_reproducible_and_complete(self):
+        """Node order is fixed by construction; edges still match the view.
 
-        An `as_view=True` conversion iterates neighbours through
-        UnionAtlas.__iter__, i.e. `set(succ) | set(pred)` - set order, not edge
-        insertion order.  cycle_basis walks that adjacency, its first cycle
-        becomes the region string, and that string is written to
-        eccDNA_final.txt.  So the selection has to be a materialized undirected
-        graph, hoisted out of the component loop rather than made per component.
+        The order deliberately differs from `subgraph()`'s: that one is the
+        set-iteration order and moves with PYTHONHASHSEED. What must hold is
+        that ours is the same on every run and describes the same graph.
         """
         graph = nx.MultiDiGraph()
         chord_edges = [
             ("n1", "n2"), ("n2", "n3"), ("n3", "n4"),
             ("n4", "n5"), ("n5", "n6"), ("n6", "n1"),
-            ("n2", "n5"),   # chord: n2 and n5 now have degree 3
+            ("n2", "n5"),
         ]
         for left, right in chord_edges:
             graph.add_edge(left, right, weight=3)
         component = set(graph.nodes())
+        undirected = graph.to_undirected()
 
-        materialized = graph.to_undirected().subgraph(component)
-        hoisted = SplitReadsCore._undirected_component(graph.to_undirected(), component)
+        first = SplitReadsCore._undirected_component(undirected, component)
+        second = SplitReadsCore._undirected_component(undirected, set(component))
+        view = undirected.subgraph(component)
 
+        assert list(first.nodes()) == list(second.nodes()) == sorted(component)
         for node in sorted(component):
-            assert list(hoisted.adj[node]) == list(materialized.adj[node]), node
-        assert nx.cycle_basis(nx.Graph(hoisted)) == nx.cycle_basis(nx.Graph(materialized))
+            assert list(first.adj[node]) == list(second.adj[node])
+        assert set(first.nodes()) == set(view.nodes())
+        assert sorted(map(sorted, first.edges())) == sorted(map(sorted, view.edges()))
+        assert nx.cycle_basis(nx.Graph(first)) == nx.cycle_basis(nx.Graph(second))
+
 
     def test_region_order_matches_whole_graph_conversion(self):
         """Node order feeds the region string, so both selections must agree."""
@@ -648,11 +651,11 @@ class TestComponentResolutionDoesNotCopyTheWholeGraph:
             optimized = SplitReadsCore._resolve_component_regions(
                 7, component, graph, pair_strand, majority
             )
-            legacy_nodes = list(graph.to_undirected().subgraph(component).nodes())
-            hoisted_nodes = list(
-                SplitReadsCore._undirected_component(graph.to_undirected(), component).nodes()
-            )
-            assert legacy_nodes == hoisted_nodes
+            # The node order deliberately no longer matches the view's: that one
+            # is set-iteration order and moves with PYTHONHASHSEED.
+            induced = SplitReadsCore._undirected_component(graph.to_undirected(), component)
+            assert list(induced.nodes()) == sorted(component)
+            assert set(induced.nodes()) == set(graph.to_undirected().subgraph(component).nodes())
             assert optimized[2] == len(component)
 
 
@@ -796,49 +799,314 @@ class TestSingletonComponentCyclicity:
         assert result[4] is False
 
 
-class TestCycleDetectionAvoidsDirectedRoundTrip:
-    """`cycle_basis` needs a simple undirected graph, not a DiGraph round trip.
+class TestCycleDetectionKeepsTheDirectedRoundTrip:
+    """cycle_basis must keep seeing the adjacency the stored outputs came from.
 
-    `nx.DiGraph(g).to_undirected()` materializes a second graph and deep-copies
-    graph-level attributes; `nx.Graph(g)` reaches the same simple undirected
-    graph in one step.  Both collapse parallel edges and both iterate nodes in
-    insertion order, so `cycle_basis` sees identical input.
+    Replacing `nx.DiGraph(g).to_undirected()` with `nx.Graph(g)` looked
+    equivalent - both collapse parallel edges, and on small graphs the
+    adjacency order matches. It is not: an end-to-end rerun of
+    ara_UMC_5200_rep1_10X_HiFi against its stored 44c79b8 output changed the
+    traversal of a 9-segment inferred CeccDNA, which reordered
+    eccDNA_regions.csv and renumbered two CeccDNA entries. The round trip
+    builds two directed edges per undirected edge and merges them back, and
+    the merged order is not in general the original one.
+
+    cycle_basis walks that adjacency and its first cycle becomes the region
+    string, so this conversion stays as it was.
+    """
+
+    def test_traversal_uses_the_round_trip(self):
+        graph = nx.MultiGraph()
+        for left, right in [("c", "a"), ("a", "b"), ("b", "c"), ("b", "d"), ("d", "a")]:
+            graph.add_edge(left, right)
+
+        result = chk_circular_subgraph(nx.MultiDiGraph(graph), graph, {})
+
+        # print_nodes comes from cycle_basis over the round-trip graph
+        expected = nx.cycle_basis(nx.DiGraph(graph).to_undirected())
+        assert expected, "test graph must contain a cycle"
+        if len(expected[0]) == len(list(graph.nodes())):
+            assert result[0] == ",".join(expected[0])
+
+
+class TestEccdnaStatsIndexesTheReadTable:
+    """Per-node lookups must not rescan the whole read/region table.
+
+    The loop ran `read_merged_ins_df[read_merged_ins_df["mergeid"] == node]`
+    once per component node.  On GlioSarc_P01_Tumor that is 24,629 scans of a
+    321,724-row object column, the same quadratic shape already fixed in
+    ecc_dedup and in the v2 packager.
     """
 
     @staticmethod
-    def _cycle_graph_with_guard():
-        class FailOnDeepcopy:
-            def __deepcopy__(self, _memo):
-                pytest.fail("cycle detection deep-copied graph metadata")
+    def _read_table(tally_cls, mergeids, rows_per_id=4):
+        records = []
+        for position, mergeid in enumerate(mergeids):
+            for repeat in range(rows_per_id):
+                records.append(
+                    {
+                        "mergeid": tally_cls(mergeid),
+                        "readid": f"read{position}_{repeat}",
+                        "q_start": repeat * 10,
+                        "q_end": repeat * 10 + 7,
+                    }
+                )
+        return pd.DataFrame(records)
 
+    def test_stats_do_not_rescan_the_table_for_every_node(self):
+        class Tally(str):
+            calls = 0
+
+            def __eq__(self, other):
+                Tally.calls += 1
+                return str.__eq__(self, other)
+
+            def __hash__(self):
+                return str.__hash__(self)
+
+        mergeids = [f"chr1_{start}_{start + 50}" for start in range(0, 400, 50)]
+        read_table = self._read_table(Tally, mergeids)
+        summary = pd.DataFrame(
+            [
+                {
+                    "id": f"ec{index}",
+                    "regions": f"{mergeid}_+",
+                    "num_nodes": 1,
+                    "is_cyclic": True,
+                }
+                for index, mergeid in enumerate(mergeids, start=1)
+            ]
+        )
+
+        Tally.calls = 0
+        SplitReadsCore._collect_eccdna_stats(summary, read_table)
+
+        # Building the index hashes the column a couple of times (isin, then
+        # groupby), so the count is a small multiple of the row count and its
+        # exact value moves with PYTHONHASHSEED. What must not happen is the
+        # per-node scan, which is rows x nodes.
+        per_node_scan = len(read_table) * len(mergeids)
+        assert Tally.calls < per_node_scan / 3, (
+            f"{Tally.calls} comparisons for {len(read_table)} rows and "
+            f"{len(mergeids)} nodes; a per-node scan would be {per_node_scan}"
+        )
+
+    def test_stats_values_match_the_per_node_scan(self):
+        mergeids = ["chr1_100_200", "chr1_300_400", "chr5_10_60"]
+        read_table = self._read_table(str, mergeids, rows_per_id=3)
+        summary = pd.DataFrame(
+            [
+                {
+                    "id": "ec1",
+                    "regions": "chr1_100_200_+,chr1_300_400_-",
+                    "num_nodes": 2,
+                    "is_cyclic": True,
+                },
+                {
+                    "id": "ec2",
+                    "regions": "chr5_10_60_+",
+                    "num_nodes": 1,
+                    "is_cyclic": False,
+                },
+            ]
+        )
+
+        results = SplitReadsCore._collect_eccdna_stats(summary, read_table)
+
+        # ec1 spans two 100 bp regions and draws 3 reads from each; every read
+        # contributes q_end - q_start = 7 bases.
+        assert results[0][:5] == ("ec1", "chr1_100_200_+,chr1_300_400_-", 200, 2, "True")
+        assert results[0][5] == 6
+        assert results[0][6] == 42
+        assert results[0][7] == "0.21"
+        assert results[1][:5] == ("ec2", "chr5_10_60_+", 50, 1, "False")
+        assert results[1][5] == 3
+        assert results[1][6] == 21
+        assert results[1][7] == "0.42"
+
+
+class TestSingletonComponentCyclicity:
+    """A one-node component is cyclic exactly when it carries a self-loop.
+
+    The single-node branch of `chk_circular_subgraph` rebuilt a directed and
+    then an undirected graph just to run `cycle_basis`, and the undirected
+    conversion deep-copies graph-level attributes.  Most GlioSarc components
+    are singletons, so this ran ~19k times per sample.  These cases pin the
+    behaviour the cheap self-loop test has to reproduce.
+    """
+
+    @staticmethod
+    def _single_node_graph(with_self_loop: bool):
         graph = nx.MultiGraph()
-        for left, right in [("A", "B"), ("B", "C"), ("C", "A")]:
-            graph.add_edge(left, right)
-        graph.graph["large_read_phasing_index"] = FailOnDeepcopy()
+        graph.add_node("chr1_100_200")
+        if with_self_loop:
+            graph.add_edge("chr1_100_200", "chr1_100_200")
         return graph
 
-    def test_multi_node_cycle_check_does_not_deepcopy(self):
-        graph = self._cycle_graph_with_guard()
+    def test_self_loop_singleton_is_cyclic(self):
+        graph = self._single_node_graph(with_self_loop=True)
         result = chk_circular_subgraph(
             nx.MultiDiGraph(graph),
             graph,
-            {},
+            {("chr1_100_200", "chr1_100_200"): {"+_+"}},
         )
-        assert result[1] == 3
-        assert result[2] is True
+        assert result[1] == 1
+        assert result[3] is True
         assert result[4] is True
 
-    def test_directed_round_trip_and_simple_graph_agree(self):
-        """Parallel edges and node order must survive the cheaper conversion."""
+    def test_bare_singleton_is_not_cyclic(self):
+        graph = self._single_node_graph(with_self_loop=False)
+        result = chk_circular_subgraph(nx.MultiDiGraph(graph), graph, {})
+        assert result[1] == 1
+        assert result[3] is False
+        assert result[4] is False
+
+    def test_empty_component_is_not_cyclic(self):
         graph = nx.MultiGraph()
-        for left, right in [("A", "B"), ("B", "C"), ("C", "A"), ("A", "B")]:
-            graph.add_edge(left, right)
+        result = chk_circular_subgraph(nx.MultiDiGraph(), graph, {})
+        assert result[1] == 0
+        assert result[3] is False
+        assert result[4] is False
 
-        round_trip = nx.cycle_basis(nx.DiGraph(graph).to_undirected())
-        simple = nx.cycle_basis(nx.Graph(graph))
 
-        assert round_trip == simple
-        assert list(nx.DiGraph(graph).to_undirected().nodes()) == list(nx.Graph(graph).nodes())
+class TestEccdnaStatsIndexesTheReadTable:
+    """Per-node lookups must not rescan the whole read/region table.
+
+    The loop ran `read_merged_ins_df[read_merged_ins_df["mergeid"] == node]`
+    once per component node.  On GlioSarc_P01_Tumor that is 24,629 scans of a
+    321,724-row object column, the same quadratic shape already fixed in
+    ecc_dedup and in the v2 packager.
+    """
+
+    @staticmethod
+    def _read_table(tally_cls, mergeids, rows_per_id=4):
+        records = []
+        for position, mergeid in enumerate(mergeids):
+            for repeat in range(rows_per_id):
+                records.append(
+                    {
+                        "mergeid": tally_cls(mergeid),
+                        "readid": f"read{position}_{repeat}",
+                        "q_start": repeat * 10,
+                        "q_end": repeat * 10 + 7,
+                    }
+                )
+        return pd.DataFrame(records)
+
+    def test_stats_do_not_rescan_the_table_for_every_node(self):
+        class Tally(str):
+            calls = 0
+
+            def __eq__(self, other):
+                Tally.calls += 1
+                return str.__eq__(self, other)
+
+            def __hash__(self):
+                return str.__hash__(self)
+
+        mergeids = [f"chr1_{start}_{start + 50}" for start in range(0, 400, 50)]
+        read_table = self._read_table(Tally, mergeids)
+        summary = pd.DataFrame(
+            [
+                {
+                    "id": f"ec{index}",
+                    "regions": f"{mergeid}_+",
+                    "num_nodes": 1,
+                    "is_cyclic": True,
+                }
+                for index, mergeid in enumerate(mergeids, start=1)
+            ]
+        )
+
+        Tally.calls = 0
+        SplitReadsCore._collect_eccdna_stats(summary, read_table)
+
+        # Building the index hashes the column a couple of times (isin, then
+        # groupby), so the count is a small multiple of the row count and its
+        # exact value moves with PYTHONHASHSEED. What must not happen is the
+        # per-node scan, which is rows x nodes.
+        per_node_scan = len(read_table) * len(mergeids)
+        assert Tally.calls < per_node_scan / 3, (
+            f"{Tally.calls} comparisons for {len(read_table)} rows and "
+            f"{len(mergeids)} nodes; a per-node scan would be {per_node_scan}"
+        )
+
+    def test_stats_values_match_the_per_node_scan(self):
+        mergeids = ["chr1_100_200", "chr1_300_400", "chr5_10_60"]
+        read_table = self._read_table(str, mergeids, rows_per_id=3)
+        summary = pd.DataFrame(
+            [
+                {
+                    "id": "ec1",
+                    "regions": "chr1_100_200_+,chr1_300_400_-",
+                    "num_nodes": 2,
+                    "is_cyclic": True,
+                },
+                {
+                    "id": "ec2",
+                    "regions": "chr5_10_60_+",
+                    "num_nodes": 1,
+                    "is_cyclic": False,
+                },
+            ]
+        )
+
+        results = SplitReadsCore._collect_eccdna_stats(summary, read_table)
+
+        # ec1 spans two 100 bp regions and draws 3 reads from each; every read
+        # contributes q_end - q_start = 7 bases.
+        assert results[0][:5] == ("ec1", "chr1_100_200_+,chr1_300_400_-", 200, 2, "True")
+        assert results[0][5] == 6
+        assert results[0][6] == 42
+        assert results[0][7] == "0.21"
+        assert results[1][:5] == ("ec2", "chr5_10_60_+", 50, 1, "False")
+        assert results[1][5] == 3
+        assert results[1][6] == 21
+        assert results[1][7] == "0.42"
+
+
+class TestSingletonComponentCyclicity:
+    """A one-node component is cyclic exactly when it carries a self-loop.
+
+    The single-node branch of `chk_circular_subgraph` rebuilt a directed and
+    then an undirected graph just to run `cycle_basis`, and the undirected
+    conversion deep-copies graph-level attributes.  Most GlioSarc components
+    are singletons, so this ran ~19k times per sample.  These cases pin the
+    behaviour the cheap self-loop test has to reproduce.
+    """
+
+    @staticmethod
+    def _single_node_graph(with_self_loop: bool):
+        graph = nx.MultiGraph()
+        graph.add_node("chr1_100_200")
+        if with_self_loop:
+            graph.add_edge("chr1_100_200", "chr1_100_200")
+        return graph
+
+    def test_self_loop_singleton_is_cyclic(self):
+        graph = self._single_node_graph(with_self_loop=True)
+        result = chk_circular_subgraph(
+            nx.MultiDiGraph(graph),
+            graph,
+            {("chr1_100_200", "chr1_100_200"): {"+_+"}},
+        )
+        assert result[1] == 1
+        assert result[3] is True
+        assert result[4] is True
+
+    def test_bare_singleton_is_not_cyclic(self):
+        graph = self._single_node_graph(with_self_loop=False)
+        result = chk_circular_subgraph(nx.MultiDiGraph(graph), graph, {})
+        assert result[1] == 1
+        assert result[3] is False
+        assert result[4] is False
+
+    def test_empty_component_is_not_cyclic(self):
+        graph = nx.MultiGraph()
+        result = chk_circular_subgraph(nx.MultiDiGraph(), graph, {})
+        assert result[1] == 0
+        assert result[3] is False
+        assert result[4] is False
 
 
 class TestStatsIndexKeepsTheOldMatchingRules:
@@ -888,3 +1156,63 @@ class TestStatsIndexKeepsTheOldMatchingRules:
         # exactly what `df["mergeid"] == "chr1_100_200"` produced.
         assert results[0][6] == 0
         assert results[0][5] == 0
+
+
+class TestComponentNodeOrderIsDeterministic:
+    """A component's node order must not depend on PYTHONHASHSEED.
+
+    networkx's subgraph view iterates nodes through FilterAtlas.__iter__:
+
+        node_ok_shorter = 2 * len(self.NODE_OK.nodes) < len(self._atlas)
+        if node_ok_shorter:
+            return (n for n in self.NODE_OK.nodes if n in self._atlas)
+
+    `NODE_OK.nodes` is the set that show_nodes stored, so whenever a component
+    holds fewer than half of the graph's nodes - which is every component on a
+    real sample - the order is the set's iteration order, i.e. hash-dependent.
+
+    That order reaches `nodes = list(subgraph.nodes())` and decides where a
+    multi-segment cycle starts and how it is walked. Two runs of identical code
+    on identical input produced different structures for an inferred 9-segment
+    CeccDNA because of this; with PYTHONHASHSEED fixed they agreed.
+    """
+
+    @staticmethod
+    def _graph_and_component():
+        graph = nx.MultiGraph()
+        for index in range(200):
+            graph.add_edge(f"chr1_{index}_{index + 100}", f"chr2_{index}_{index + 100}")
+        component = {f"chr1_{i}_{i + 100}" for i in range(3)} | {
+            f"chr2_{i}_{i + 100}" for i in range(3)
+        }
+        return graph, component
+
+    def test_component_nodes_come_back_sorted(self):
+        graph, component = self._graph_and_component()
+        subgraph = SplitReadsCore._undirected_component(graph, component)
+
+        nodes = list(subgraph.nodes())
+        assert nodes == sorted(component), nodes
+
+    def test_edges_and_membership_are_unchanged(self):
+        graph, component = self._graph_and_component()
+        view = graph.subgraph(component)
+        ours = SplitReadsCore._undirected_component(graph, component)
+
+        assert set(ours.nodes()) == set(view.nodes())
+        assert sorted(map(sorted, ours.edges())) == sorted(map(sorted, view.edges()))
+        assert ours.number_of_edges() == view.number_of_edges()
+        for node in component:
+            assert ours.degree[node] == view.degree[node]
+
+    def test_parallel_edges_and_self_loops_survive(self):
+        graph = nx.MultiGraph()
+        graph.add_edge("a", "b")
+        graph.add_edge("a", "b")          # parallel
+        graph.add_edge("a", "a")          # self loop
+        graph.add_edge("c", "d")
+        ours = SplitReadsCore._undirected_component(graph, {"a", "b"})
+
+        assert ours.number_of_edges() == 3
+        assert list(nx.selfloop_edges(ours)) == [("a", "a")]
+        assert list(ours.nodes()) == ["a", "b"]

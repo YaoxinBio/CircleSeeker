@@ -9,6 +9,7 @@ This module handles:
 
 from __future__ import annotations
 
+import bisect
 import re
 import json
 from pathlib import Path
@@ -223,6 +224,49 @@ def build_cecc_segment_index(
     return idx
 
 
+_WindowCache = dict[int, tuple[list[int], list[int]]]
+
+
+def _window_bounds(candidates: list[tuple[int, int, int]]) -> tuple[list[int], list[int]]:
+    """Start positions and the running maximum of end positions.
+
+    `candidates` is sorted by start, so `starts` is monotone and the running
+    maximum of `end` is monotone by construction - both can be bisected.
+    """
+    starts: list[int] = []
+    prefix_max_end: list[int] = []
+    running = None
+    for start, end, _ in candidates:
+        starts.append(start)
+        running = end if running is None else max(running, end)
+        prefix_max_end.append(running)
+    return starts, prefix_max_end
+
+
+def _candidate_window(
+    candidates: list[tuple[int, int, int]],
+    s: int,
+    e: int,
+    tol: int,
+    bounds: Optional[tuple[list[int], list[int]]] = None,
+) -> list[tuple[int, int, int]]:
+    """The slice of `candidates` the unbounded scan would have examined.
+
+    Entries at or after `bisect_right(starts, e + tol)` are the ones it broke
+    on. Entries before `bisect_left(prefix_max_end, s - tol)` all satisfy
+    `end < s - tol`, which it skipped. The caller keeps its own `te < s - tol`
+    test for the entries in between, so the visited set and order are identical.
+    """
+    if not candidates:
+        return []
+    starts, prefix_max_end = bounds if bounds is not None else _window_bounds(candidates)
+    hi = bisect.bisect_right(starts, e + tol)
+    if hi == 0:
+        return []
+    lo = bisect.bisect_left(prefix_max_end, s - tol, 0, hi)
+    return candidates[lo:hi]
+
+
 def find_redundant_simple(
     inferred_df: pd.DataFrame, confirmed_df: pd.DataFrame, thr: float = 0.99, tol: int = 20
 ) -> dict[str, str]:
@@ -249,6 +293,8 @@ def find_redundant_simple(
     cecc_filtered = confirmed_df[confirmed_df["eccDNA_type"] == "CeccDNA"].reset_index(drop=True)
 
     redundant_map: dict[str, str] = {}
+    uecc_bounds: dict[str, tuple[list[int], list[int]]] = {}
+    cecc_bounds: dict[str, tuple[list[int], list[int]]] = {}
 
     # Resolve column names once
     chr_col = "chr" if "chr" in inferred_df.columns else ("Chr" if "Chr" in inferred_df.columns else None)
@@ -287,9 +333,9 @@ def find_redundant_simple(
 
         # Check against confirmed UeccDNA entries on same chromosome
         uecc_cand = uecc_idx.get(ch, [])
-        for ts, te, ridx in uecc_cand:
-            if ts > e + tol:
-                break  # No more possible overlaps
+        if ch not in uecc_bounds:
+            uecc_bounds[ch] = _window_bounds(uecc_cand)
+        for ts, te, ridx in _candidate_window(uecc_cand, s, e, tol, uecc_bounds[ch]):
             if te < s - tol:
                 continue  # Not overlapping yet
 
@@ -302,9 +348,9 @@ def find_redundant_simple(
         # If not redundant with UeccDNA, check against CeccDNA segments
         if matched_confirmed_id is None:
             cecc_cand = cecc_idx.get(ch, [])
-            for ts, te, ridx in cecc_cand:
-                if ts > e + tol:
-                    break  # No more possible overlaps
+            if ch not in cecc_bounds:
+                cecc_bounds[ch] = _window_bounds(cecc_cand)
+            for ts, te, ridx in _candidate_window(cecc_cand, s, e, tol, cecc_bounds[ch]):
                 if te < s - tol:
                     continue  # Not overlapping yet
 

@@ -1362,3 +1362,69 @@ class TestAugmentationWritesByPosition:
 
         after = confirmed.drop(index=1)[["eccDNA_id", "reads_count"]]
         pd.testing.assert_frame_equal(after, before[["eccDNA_id", "reads_count"]])
+
+
+class TestRedundantSimpleScanIsBounded:
+    """The per-chromosome candidate scan must not start at index 0 every time.
+
+    The loop only `continue`d past entries ending before the query, so each
+    inferred entry walked the chromosome's confirmed list from the beginning -
+    fable measured 23,104 tuples visited per inferred entry, 4.38e8 in total,
+    96 s on the real 1,148,834-row confirmed table.
+
+    Bounding it is exact: candidates are sorted by start, so entries after
+    `bisect_right(starts, e + tol)` are the ones the old loop broke on, and the
+    running maximum of `end` is monotone, so entries before
+    `bisect_left(prefix_max_end, s - tol)` all had `te < s - tol` and were
+    skipped. Everything between is visited in the same order.
+    """
+
+    @staticmethod
+    def _reference(candidates, s, e, tol):
+        """The unbounded scan, as it was written."""
+        visited = []
+        for ts, te, ridx in candidates:
+            if ts > e + tol:
+                break
+            if te < s - tol:
+                continue
+            visited.append(ridx)
+        return visited
+
+    @staticmethod
+    def _bounded(candidates, s, e, tol):
+        from circleseeker.modules.ecc_unify import _candidate_window
+
+        visited = []
+        for ts, te, ridx in _candidate_window(candidates, s, e, tol):
+            if te < s - tol:
+                continue
+            visited.append(ridx)
+        return visited
+
+    def _candidates(self):
+        raw = [
+            (10, 40, 0), (15, 18, 1), (20, 200, 2), (35, 60, 3),
+            (50, 55, 4), (80, 90, 5), (100, 300, 6), (120, 130, 7),
+        ]
+        return sorted(raw, key=lambda t: t[0])
+
+    @pytest.mark.parametrize(
+        "s,e",
+        [(0, 5), (30, 45), (55, 85), (100, 100), (0, 1000), (500, 600), (19, 21)],
+    )
+    @pytest.mark.parametrize("tol", [0, 20])
+    def test_bounded_scan_visits_the_same_entries(self, s, e, tol):
+        candidates = self._candidates()
+        assert self._bounded(candidates, s, e, tol) == self._reference(candidates, s, e, tol)
+
+    def test_empty_candidates(self):
+        assert self._bounded([], 10, 20, 20) == []
+
+    def test_boundaries_are_inclusive_as_before(self):
+        # ts == e + tol must still be visited (the old loop broke on ts > e+tol)
+        candidates = [(30, 40, 0)]
+        assert self._bounded(candidates, 5, 10, 20) == self._reference(candidates, 5, 10, 20)
+        # te == s - tol must still be skipped by the caller's own check
+        candidates = [(0, 5, 0)]
+        assert self._bounded(candidates, 25, 30, 20) == self._reference(candidates, 25, 30, 20)

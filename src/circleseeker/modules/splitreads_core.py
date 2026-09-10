@@ -619,10 +619,7 @@ def chk_circular_subgraph(
         rm_sl_subgraph = graph.copy()
         rm_sl_subgraph.remove_edges_from(nx.selfloop_edges(rm_sl_subgraph))
         solved = all(x <= 2 for x in [rm_sl_subgraph.degree[node] for node in list_nodes])
-        # nx.Graph() reaches the same simple undirected graph as a DiGraph
-        # round trip - both collapse parallel edges and keep insertion order -
-        # without materializing a second graph and deep-copying its attributes.
-        cyclic = len(nx.cycle_basis(nx.Graph(rm_sl_subgraph))) > 0
+        cyclic = len(nx.cycle_basis(nx.DiGraph(rm_sl_subgraph).to_undirected())) > 0
     else:
         # At most one node: the only possible cycle is a self-loop, which `sl`
         # already answers.  Rebuilding a directed and then an undirected graph
@@ -635,7 +632,9 @@ def chk_circular_subgraph(
 
     test_graph = graph.copy()
     test_graph.remove_edges_from(nx.selfloop_edges(test_graph))
-    list_traversal = nx.cycle_basis(nx.Graph(test_graph))
+    # Keep the DiGraph round trip: its adjacency order decides which cycle
+    # cycle_basis returns first, and that cycle becomes the region string.
+    list_traversal = nx.cycle_basis(nx.DiGraph(test_graph).to_undirected())
     if len(list_traversal) > 0:
         list_traversal_ini = list_traversal[0]
         if len(list_traversal_ini) == len(list_nodes):
@@ -1081,12 +1080,34 @@ class SplitReadsCore:
 
     @staticmethod
     def _undirected_component(undirected_graph: "nx.MultiGraph", comp_nodes: set) -> Any:
-        """Induce one component from an already-undirected graph.
+        """Induce one component, with a node order that does not depend on hashing.
 
-        Kept separate so the adjacency order it yields can be pinned against a
-        per-component `G.to_undirected().subgraph(...)` in the tests.
+        `undirected_graph.subgraph(nodes)` returns a view whose iteration goes
+        through FilterAtlas.__iter__:
+
+            node_ok_shorter = 2 * len(self.NODE_OK.nodes) < len(self._atlas)
+            if node_ok_shorter:
+                return (n for n in self.NODE_OK.nodes if n in self._atlas)
+
+        `NODE_OK.nodes` is a set, so any component holding fewer than half of
+        the graph's nodes - i.e. every component on a real sample - comes back
+        in set order, which changes with PYTHONHASHSEED. That order reaches
+        `list(subgraph.nodes())` and decides where a multi-segment cycle starts
+        and how it is walked, so two runs of identical code on identical input
+        reported different structures for the same inferred CeccDNA.
+
+        Building the induced graph explicitly, nodes in sorted order and edges
+        in the parent graph's order, removes that dependency. Membership,
+        edges, parallel edges, self-loops and degrees are those of the view.
         """
-        return undirected_graph.subgraph(comp_nodes)
+        induced = type(undirected_graph)()
+        wanted = set(comp_nodes)
+        for node in sorted(wanted):
+            induced.add_node(node, **undirected_graph.nodes[node])
+        for left, right, key, data in undirected_graph.edges(keys=True, data=True):
+            if left in wanted and right in wanted:
+                induced.add_edge(left, right, key=key, **data)
+        return induced
 
     @staticmethod
     def _resolve_component_regions(
@@ -1154,7 +1175,7 @@ class SplitReadsCore:
             test_graph = subgraph.copy()
             test_graph.remove_edges_from(nx.selfloop_edges(test_graph))
 
-            list_traversal = nx.cycle_basis(nx.Graph(test_graph))
+            list_traversal = nx.cycle_basis(nx.DiGraph(test_graph).to_undirected())
             if len(list_traversal) == 0:
                 regions = ",".join(
                     f"{node}_{dict_majority_strand.get(node, '+')}" for node in nodes

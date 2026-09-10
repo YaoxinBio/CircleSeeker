@@ -327,13 +327,36 @@ class UeccProcessor(BaseEccProcessor):
             df["cluster_size"] = 1
             return df
 
-        # Generate signature for each row (UeccDNA has one row per query_id)
-        df["location_signature"] = df.apply(
-            lambda row: f"{row['chr']}:{row['start0']}-{row['end0']}", axis=1
+        # Generate signature for each row (UeccDNA has one row per query_id).
+        # An axis=1 apply builds a Series per row; str concatenation formats the
+        # same values - f"{v}" and astype(str) agree on ints, floats and NaN.
+        df["location_signature"] = (
+            df["chr"].astype(str)
+            + ":"
+            + df["start0"].astype(str)
+            + "-"
+            + df["end0"].astype(str)
         )
 
         # Group by signature
         signature_groups = df.groupby("location_signature")
+
+        # Aggregate once for all groups rather than calling sum()/mean() inside
+        # the loop: >=1,109,705 Uecc signatures at ~0.85 ms each is 16-25 min.
+        # groupby.sum() and .mean() skip NaN exactly as the per-group
+        # `.sum()` and `.dropna().mean()` did, and count() reproduces the
+        # `len(gaps) > 0` guard that decides whether to overwrite at all.
+        has_copynum = "copy_number" in df.columns
+        has_gap = "Gap_Percentage" in df.columns
+        copynum_by_signature: Any = (
+            signature_groups["copy_number"].sum() if has_copynum else {}
+        )
+        gap_mean_by_signature: Any = (
+            signature_groups["Gap_Percentage"].mean() if has_gap else {}
+        )
+        gap_count_by_signature: Any = (
+            signature_groups["Gap_Percentage"].count() if has_gap else {}
+        )
 
         result_rows = []
         cluster_id = 0
@@ -347,17 +370,14 @@ class UeccProcessor(BaseEccProcessor):
                 representative = group.iloc[0].copy()
 
                 # Aggregate copy_number
-                if "copy_number" in group.columns:
-                    total_copynum = group["copy_number"].sum()
-                    representative["copy_number"] = total_copynum
+                if has_copynum:
+                    representative["copy_number"] = copynum_by_signature[signature]
 
                 # Average Gap_Percentage and match_degree
-                if "Gap_Percentage" in group.columns:
-                    gaps = group["Gap_Percentage"].dropna()
-                    if len(gaps) > 0:
-                        avg_gap = gaps.mean()
-                        representative["Gap_Percentage"] = round(avg_gap, 2)
-                        representative["match_degree"] = round(100 - avg_gap, 2)
+                if has_gap and gap_count_by_signature[signature] > 0:
+                    avg_gap = gap_mean_by_signature[signature]
+                    representative["Gap_Percentage"] = round(avg_gap, 2)
+                    representative["match_degree"] = round(100 - avg_gap, 2)
 
                 # Aggregate reads if present
                 if "reads" in group.columns:
