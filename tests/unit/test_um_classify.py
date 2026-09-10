@@ -522,6 +522,28 @@ class TestClusterLoci:
         loci = clf._cluster_loci(df)
         assert len(loci) == 2
 
+    def test_rows_with_a_missing_chromosome_never_cluster_together(self):
+        """`groupby([chr, strand])` drops NaN keys - that is its default - so a
+        malformed row with an empty subject_id was never clustered with
+        anything. Bucketing by hand would instead collect every such row into
+        one bucket keyed (nan, strand) and union them into a single locus.
+        """
+        clf = UMeccClassifier()
+        rows = [
+            _make_alignment_row(s_start=100, s_end=199),
+            _make_alignment_row(s_start=110, s_end=209),
+            _make_alignment_row(s_start=120, s_end=219),
+        ]
+        df = self._make_preprocessed_group(clf, rows)
+        chr_col = df.columns[list(df.columns).index(ColumnStandard.CHR)]
+        df.loc[df.index[:2], chr_col] = np.nan
+
+        loci = clf._cluster_loci(df)
+
+        # two NaN rows that overlap each other, plus one real row
+        assert len(loci) == 3
+        assert all(len(members) == 1 for members in loci.values())
+
     def test_overlapping_same_cluster(self):
         clf = UMeccClassifier()
         rows = [

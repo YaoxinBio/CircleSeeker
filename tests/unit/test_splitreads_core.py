@@ -1191,12 +1191,43 @@ class TestComponentNodeOrderIsDeterministic:
         }
         return graph, component
 
-    def test_component_nodes_come_back_sorted(self):
+    def test_component_nodes_follow_the_parent_graph_not_the_hash(self):
+        """The order is the parent's own node order, filtered to the component.
+
+        Not sorted: the parent's order is what every result until now was
+        computed from, and it is a property of the graph rather than of the
+        process. Only the hash-seeded branch is bypassed.
+        """
         graph, component = self._graph_and_component()
         subgraph = SplitReadsCore._undirected_component(graph, component)
 
-        nodes = list(subgraph.nodes())
-        assert nodes == sorted(component), nodes
+        expected = [node for node in graph if node in component]
+        assert list(subgraph.nodes()) == expected
+        # and that is not the sorted order, so this test would catch a
+        # reintroduction of sorting as well as of set iteration
+        assert expected != sorted(component)
+
+    def test_matches_the_view_where_the_view_is_deterministic(self):
+        """A component holding at least half the graph takes networkx's other
+        branch, which filters the parent's order and is already deterministic.
+        Everything an eventual result is read from must match it exactly.
+        """
+        graph = nx.MultiGraph()
+        for left, right in [("n0", "n9"), ("n2", "n1"), ("n1", "n3"),
+                            ("n0", "n2"), ("n3", "n9"), ("n2", "n3")]:
+            graph.add_edge(left, right, weight=1)
+        component = set(graph.nodes())
+        assert 2 * len(component) >= len(graph)
+
+        view = graph.subgraph(component)
+        ours = SplitReadsCore._undirected_component(graph, component)
+
+        assert list(ours.nodes()) == list(view.nodes())
+        assert list(ours.edges(keys=True)) == list(view.edges(keys=True))
+        assert dict(ours.degree()) == dict(view.degree())
+        assert nx.cycle_basis(nx.DiGraph(ours).to_undirected()) == nx.cycle_basis(
+            nx.DiGraph(view).to_undirected()
+        )
 
     def test_edges_and_membership_are_unchanged(self):
         graph, component = self._graph_and_component()
@@ -1290,3 +1321,41 @@ class TestReadHitsFrameIsBuiltOnce:
         assert list(shared["ref"]) == list(expected["ref"])
 
 
+
+
+class TestStrandChoiceIsDeterministic:
+    """`dict_pair_strand` values are sets of strings like "+_+" and "-_+".
+
+    A region pair carrying both tandem and inverted evidence holds more than
+    one, and `next(iter(...))` / `list(...)` over a set of strings returns a
+    different element per process because str hashing is seeded. The chosen
+    strand is written into merge_region, so the choice must be defined.
+    """
+
+    @staticmethod
+    def _one_node_regions(strands):
+        graph = nx.MultiDiGraph()
+        graph.add_edge("chrA_10_200", "chrA_10_200", weight=5)
+        undirected = graph.to_undirected()
+        result = SplitReadsCore._resolve_component_regions(
+            1,
+            {"chrA_10_200"},
+            graph,
+            {("chrA_10_200", "chrA_10_200"): set(strands)},
+            {"chrA_10_200": "+"},
+            undirected_graph=undirected,
+        )
+        return result[1]
+
+    def test_a_pair_with_both_orientations_picks_the_same_one_every_time(self):
+        # both insertion orders of the same set must give the same answer
+        assert self._one_node_regions(["+_+", "-_+"]) == self._one_node_regions(
+            ["-_+", "+_+"]
+        )
+
+    def test_the_choice_is_the_smallest_strand_string(self):
+        assert self._one_node_regions(["+_+", "-_+"]) == "chrA_10_200_+"
+        assert self._one_node_regions(["-_-", "-_+"]) == "chrA_10_200_-"
+
+    def test_a_single_orientation_is_unaffected(self):
+        assert self._one_node_regions(["-_-"]) == "chrA_10_200_-"

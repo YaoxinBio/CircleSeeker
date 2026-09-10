@@ -5,6 +5,7 @@ import importlib.util
 import sys
 import types
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -56,6 +57,8 @@ _coerce_to_paths = umc_module._coerce_to_paths
 _reverse_complement = umc_module._reverse_complement
 _min_circular_rotation = umc_module._min_circular_rotation
 _booth_min_rotation_start = umc_module._booth_min_rotation_start
+_sum_by_group = umc_module._sum_by_group
+_mean_by_group = umc_module._mean_by_group
 
 
 class TestHelperFunctions:
@@ -1244,3 +1247,63 @@ class TestClusterRepresentativeIsADict:
         row = result[result["location_signature"] == "chr2:500-600"].iloc[0]
         assert row["query_id"] == "q3"        # first member is the representative
         assert row["eccDNA_id"] == "U3"
+
+
+class TestGroupAggregationMatchesPandasBitForBit:
+    """The per-group `Series.sum()` / `dropna().mean()` these replace reduce with
+    numpy pairwise summation. A groupby kernel sums with compensation instead,
+    so the two disagree in the last bits - and `round(x, 2)` turns some of those
+    into a different number in the written Gap_Percentage and match_degree.
+    """
+
+    @staticmethod
+    def _frame():
+        # each of these groups is a real disagreement between the two paths
+        rows = [
+            ("s1", 32.80), ("s1", 17.54), ("s1", 67.48), ("s1", 36.28),
+            ("s2", 38.62), ("s2", 29.09), ("s2", 96.69), ("s2", 64.46),
+            ("s3", 84.03), ("s3", 38.77), ("s3", 81.42),
+            ("s3", 27.71), ("s3", 70.61), ("s3", 54.55),
+        ]
+        return pd.DataFrame(rows, columns=["sig", "val"])
+
+    def test_the_two_pandas_paths_really_do_disagree(self):
+        """Guard the guard: if pandas ever makes these agree, this fixture stops
+        proving anything and should be replaced rather than silently passing."""
+        frame = self._frame()
+        groups = frame.groupby("sig")
+        kernel = groups["val"].mean()
+        per_group = {sig: g["val"].dropna().mean() for sig, g in groups}
+        assert any(round(per_group[sig], 2) != round(kernel[sig], 2) for sig in per_group)
+
+    def test_mean_and_count_match_the_per_group_calls(self):
+        frame = self._frame()
+        groups = frame.groupby("sig")
+        means, counts = _mean_by_group(frame["val"], groups.indices)
+        for sig, group in groups:
+            gaps = group["val"].dropna()
+            assert counts[sig] == len(gaps)
+            assert means[sig] == gaps.mean()
+            assert round(means[sig], 2) == round(gaps.mean(), 2)
+
+    def test_sum_matches_the_per_group_call_including_nan(self):
+        frame = self._frame()
+        frame.loc[[1, 5, 9], "val"] = np.nan
+        groups = frame.groupby("sig")
+        sums = _sum_by_group(frame["val"], groups.indices)
+        for sig, group in groups:
+            assert sums[sig] == group["val"].sum()
+
+    def test_integer_columns_keep_their_dtype(self):
+        frame = pd.DataFrame({"sig": ["a", "a", "b"], "val": [5, 3, 2]})
+        groups = frame.groupby("sig")
+        sums = _sum_by_group(frame["val"], groups.indices)
+        assert sums["a"] == 8
+        assert type(sums["a"]) is type(frame[frame.sig == "a"]["val"].sum())
+
+    def test_an_all_nan_group_reports_no_count(self):
+        frame = pd.DataFrame({"sig": ["a", "a"], "val": [np.nan, np.nan]})
+        groups = frame.groupby("sig")
+        means, counts = _mean_by_group(frame["val"], groups.indices)
+        assert counts["a"] == 0
+        assert pd.isna(means["a"])

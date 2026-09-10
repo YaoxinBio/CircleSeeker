@@ -43,6 +43,54 @@ def _sanitize_fasta_id(id_str: str) -> str:
     return id_str
 
 
+def _sum_by_group(
+    column: pd.Series, positions_by_key: dict[Any, np.ndarray]
+) -> dict[Any, Any]:
+    """Per-group ``Series.sum()``, reproduced bit-for-bit over positions.
+
+    pandas' ``nansum`` fills NaN with 0 and reduces the array at its FULL
+    length; a groupby kernel compensates and drops NaN, so the two disagree in
+    the last bits.  Reduce the same array pandas would have reduced.
+    """
+    values = column.to_numpy()
+    if not np.issubdtype(values.dtype, np.number):
+        # object columns keep the original path; there is nothing to speed up
+        return {key: column.iloc[pos].sum() for key, pos in positions_by_key.items()}
+    if np.issubdtype(values.dtype, np.floating):
+        filled = np.where(np.isnan(values), values.dtype.type(0), values)
+    else:
+        filled = values
+    return {key: filled[pos].sum() for key, pos in positions_by_key.items()}
+
+
+def _mean_by_group(
+    column: pd.Series, positions_by_key: dict[Any, np.ndarray]
+) -> tuple[dict[Any, Any], dict[Any, int]]:
+    """Per-group ``dropna().mean()`` and ``count()``, reproduced over positions.
+
+    ``dropna()`` first means the reduction runs on the COMPACTED array, so it
+    cannot share a pass with :func:`_sum_by_group` -- pairwise summation
+    depends on the length of the array it walks.
+    """
+    values = column.to_numpy()
+    means: dict[Any, Any] = {}
+    counts: dict[Any, int] = {}
+    numeric = np.issubdtype(values.dtype, np.number)
+    for key, pos in positions_by_key.items():
+        if not numeric:
+            # object columns keep the original path, exception behaviour included
+            gaps = column.iloc[pos].dropna()
+            counts[key] = len(gaps)
+            means[key] = gaps.mean() if len(gaps) else np.nan
+            continue
+        present = values[pos]
+        if np.issubdtype(values.dtype, np.floating):
+            present = present[~np.isnan(present)]
+        counts[key] = len(present)
+        means[key] = present.sum() / len(present) if len(present) else np.nan
+    return means, counts
+
+
 def _coerce_to_paths(value: Optional[Union[Path, Sequence[Path]]]) -> list[Path]:
     """Normalize path inputs to a list of Path objects."""
     if value is None:
@@ -343,19 +391,27 @@ class UeccProcessor(BaseEccProcessor):
 
         # Aggregate once for all groups rather than calling sum()/mean() inside
         # the loop: >=1,109,705 Uecc signatures at ~0.85 ms each is 16-25 min.
-        # groupby.sum() and .mean() skip NaN exactly as the per-group
-        # `.sum()` and `.dropna().mean()` did, and count() reproduces the
-        # `len(gaps) > 0` guard that decides whether to overwrite at all.
+        # groupby.sum()/.mean() would be the obvious replacement but they are
+        # NOT bit-equal to the per-group calls they replace: the cython kernels
+        # sum with compensation, Series.sum()/mean() reduce with numpy pairwise
+        # summation. Over 3,000 random groups 679 sums and 617 means differed
+        # in the last bits and 34 of those flipped round(x, 2) -- which reaches
+        # Gap_Percentage and match_degree in the written table. So reduce each
+        # group with numpy over its own positions, on the same arrays and in
+        # the same shapes pandas would have used:
+        #   Series.sum()          -> nansum: NaN filled with 0, FULL length
+        #   dropna().mean()       -> nanmean: NaN dropped, COMPACTED length
+        # Pairwise summation depends on length, so the two cannot share a pass.
         has_copynum = "copy_number" in df.columns
         has_gap = "Gap_Percentage" in df.columns
-        copynum_by_signature: Any = (
-            signature_groups["copy_number"].sum() if has_copynum else {}
+        positions_by_signature = signature_groups.indices
+        copynum_by_signature = (
+            _sum_by_group(df["copy_number"], positions_by_signature) if has_copynum else {}
         )
-        gap_mean_by_signature: Any = (
-            signature_groups["Gap_Percentage"].mean() if has_gap else {}
-        )
-        gap_count_by_signature: Any = (
-            signature_groups["Gap_Percentage"].count() if has_gap else {}
+        gap_mean_by_signature, gap_count_by_signature = (
+            _mean_by_group(df["Gap_Percentage"], positions_by_signature)
+            if has_gap
+            else ({}, {})
         )
 
         result_rows = []

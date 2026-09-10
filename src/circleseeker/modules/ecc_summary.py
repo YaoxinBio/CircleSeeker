@@ -297,36 +297,13 @@ class EccSummary:
 
         return remember((sequences, total_bytes - newlines - header_bytes))
 
-    def process_fasta(
-        self, fasta_path: Union[Path, str], counts: Optional[tuple[int, int]] = None
-    ) -> dict:
-        """Legacy wrapper to record FASTA statistics.
-
-        `counts` lets the caller hand over (sequences, bases) it already has -
-        read_filter walks every read of this same input to write the filtered
-        FASTA, so re-reading it here is a third full pass over 76 GB on a real
-        sample. The numbers are defined the same way: sequences are lines
-        starting with '>', bases are the stripped lengths of the others.
-        """
+    def process_fasta(self, fasta_path: Union[Path, str]) -> dict:
+        """Legacy wrapper to record FASTA statistics."""
         path = Path(fasta_path)
         self._original_fasta = path
 
         total_sequences = 0
         total_length = 0
-
-        if counts is not None:
-            total_sequences, total_length = counts
-            average_length = (
-                round(total_length / total_sequences, 2) if total_sequences else 0
-            )
-            self.read_stats.update(
-                {
-                    "total_sequences": total_sequences,
-                    "total_length": total_length,
-                    "average_length": average_length,
-                }
-            )
-            return self.read_stats
 
         try:
             counted = self._scan_fasta_in_blocks(path)

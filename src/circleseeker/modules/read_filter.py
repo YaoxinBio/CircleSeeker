@@ -36,7 +36,6 @@ class FilterStats:
     """Statistics for filtering operation."""
 
     total_reads: int = 0
-    total_bases: int = 0
     filtered_reads: int = 0
     retained_reads: int = 0
     csv_total_reads: int = 0
@@ -211,10 +210,6 @@ class Sieve:
 
                         elif line:  # Sequence line
                             current_sequence.append(line)
-                            # Same definition ecc_summary uses, so that step can
-                            # take the total from here instead of re-reading the
-                            # whole input.
-                            self.stats.total_bases += len(line.strip())
 
                     # Write last sequence
                     if current_header is not None:

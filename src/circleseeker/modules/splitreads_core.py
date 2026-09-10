@@ -1102,17 +1102,35 @@ class SplitReadsCore:
         and how it is walked, so two runs of identical code on identical input
         reported different structures for the same inferred CeccDNA.
 
-        Building the induced graph explicitly, nodes in sorted order and edges
-        in the parent graph's order, removes that dependency. Membership,
-        edges, parallel edges, self-loops and degrees are those of the view.
+        The other branch of that same `if` - taken when the component holds at
+        least half the graph - filters the parent graph's own node order, and
+        `FilterAdjacency` always filters the parent's adjacency order. That
+        order is a property of the graph, not of the process, and it is the
+        order every result until now was computed from.
+
+        So the induced graph is built by walking the parent in exactly that
+        order: its nodes filtered to the component, and for each node its
+        adjacency filtered the same way. The hash-seeded branch is bypassed and
+        nothing else moves - where the view was already deterministic, this
+        reproduces it node for node and neighbour for neighbour. Membership,
+        edges, parallel edges, self-loops, degrees and attributes are the
+        view's.
         """
         induced = type(undirected_graph)()
         wanted = set(comp_nodes)
-        for node in sorted(wanted):
-            induced.add_node(node, **undirected_graph.nodes[node])
-        for left, right, key, data in undirected_graph.edges(keys=True, data=True):
-            if left in wanted and right in wanted:
-                induced.add_edge(left, right, key=key, **data)
+        for node in undirected_graph:
+            if node in wanted:
+                induced.add_node(node, **undirected_graph.nodes[node])
+        seen: set = set()
+        for left in undirected_graph:
+            if left not in wanted:
+                continue
+            for right, keyed in undirected_graph.adj[left].items():
+                if right not in wanted or (right in seen and right != left):
+                    continue
+                for key, data in keyed.items():
+                    induced.add_edge(left, right, key=key, **data)
+            seen.add(left)
         return induced
 
     @staticmethod
@@ -1156,7 +1174,12 @@ class SplitReadsCore:
         if len(nodes) == 1:
             pair_key = (nodes[0], nodes[0])
             if pair_key in dict_pair_strand:
-                strand = next(iter(dict_pair_strand[pair_key]))[0]
+                # dict_pair_strand values are sets of strings such as "+_+" and
+                # "-_+".  A region with both tandem and inverted evidence has
+                # more than one, and iterating the set picks a different one per
+                # process because str hashing is seeded.  The strand reaches
+                # merge_region, so take the smallest rather than an arbitrary one.
+                strand = min(dict_pair_strand[pair_key])[0]
                 regions = f"{nodes[0]}_{strand}"
             else:
                 regions = f"{nodes[0]}_{dict_majority_strand.get(nodes[0], '+')}"
@@ -1166,9 +1189,9 @@ class SplitReadsCore:
             key_reverse = (nodes[1], nodes[0])
 
             if key_forward in dict_pair_strand:
-                list_strand = next(iter(dict_pair_strand[key_forward])).split("_")
+                list_strand = min(dict_pair_strand[key_forward]).split("_")
             elif key_reverse in dict_pair_strand:
-                list_strand = next(iter(dict_pair_strand[key_reverse])).split("_")[::-1]
+                list_strand = min(dict_pair_strand[key_reverse]).split("_")[::-1]
             else:
                 list_strand = []
 
@@ -1201,7 +1224,7 @@ class SplitReadsCore:
                     list_this_level: list[list[str]] = []
 
                     if pair_key in dict_pair_strand:
-                        for str_strand in list(dict_pair_strand[pair_key]):
+                        for str_strand in sorted(dict_pair_strand[pair_key]):
                             list_str_strand = [
                                 "_".join(x)
                                 for x in zip([l_region, r_region], str_strand.split("_"))
@@ -1212,7 +1235,7 @@ class SplitReadsCore:
                         if rev_pair_key in dict_pair_strand:
                             for str_strand in [
                                 reverse_strand(x)
-                                for x in list(dict_pair_strand[rev_pair_key])
+                                for x in sorted(dict_pair_strand[rev_pair_key])
                             ]:
                                 list_str_strand = [
                                     "_".join(x)

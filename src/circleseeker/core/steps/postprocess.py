@@ -142,14 +142,7 @@ def ecc_summary(pipeline: Pipeline) -> None:
     if input_file is None:
         pipeline.logger.info("No input FASTA configured for summary, skipping")
         return
-    # read_filter already walked every read of this input; reuse its counts
-    # rather than making a third full pass over the raw FASTA.
-    filter_reads = pipeline._get_result(ResultKeys.READ_FILTER_TOTAL)
-    filter_bases = pipeline._get_result(ResultKeys.READ_FILTER_BASES)
-    if isinstance(filter_reads, int) and isinstance(filter_bases, int) and filter_reads > 0:
-        summary.process_fasta(input_file, counts=(filter_reads, filter_bases))
-    else:
-        summary.process_fasta(input_file)
+    summary.process_fasta(input_file)
     summary.process_processed_csv(processed_csv)
     summary.process_merged_csv(main_csv)
     if stats_json.exists():

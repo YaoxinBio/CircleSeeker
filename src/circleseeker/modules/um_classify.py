@@ -666,7 +666,14 @@ class UMeccClassifier:
 
         buckets: dict[tuple, list[int]] = {}
         for i in range(n):
-            buckets.setdefault((chrom_vals[i], strand_vals[i]), []).append(i)
+            chrom, strand = chrom_vals[i], strand_vals[i]
+            # groupby(..., dropna=True) - its default - drops rows whose key
+            # holds NaN, so a malformed row with an empty subject_id never
+            # clustered with anything.  A dict would instead collect all such
+            # rows into one bucket and union them into a single locus.
+            if chrom != chrom or strand != strand:
+                continue
+            buckets.setdefault((chrom, strand), []).append(i)
 
         pos_tol = int(self.pos_tol_bp)
         theta = float(self.theta_locus)
