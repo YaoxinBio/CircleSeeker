@@ -601,6 +601,32 @@ class UMeccClassifier:
             id_min = 0.0
         return mapq_best, mapq_min, id_best, id_min
 
+    @staticmethod
+    def _locus_span_from_arrays(
+        mapq_vals: Any, chrom_vals: Any, start_vals: Any, end_vals: Any, positions: Any
+    ) -> tuple[int, str, int, int]:
+        """Best MAPQ, chromosome, and genomic span of one locus.
+
+        The Uecc branch read these off a `group.loc[idxs]` slice, taken for
+        every classified query. np.nanmax/nanmin skip NaN exactly as pandas
+        max()/min() do, and the chromosome is the locus's first row either way.
+        """
+        best_mapq = int(np.nanmax(mapq_vals[positions]))
+        chrom = str(chrom_vals[positions][0])
+        start0 = int(np.nanmin(start_vals[positions]))
+        end0 = int(np.nanmax(end_vals[positions]))
+        return best_mapq, chrom, start0, end0
+
+    @staticmethod
+    def _argmax_position(values: Any, positions: Any) -> int:
+        """Position of the locus's largest value, first one on a tie.
+
+        Mirrors `Series.idxmax()`, which returns the first maximum and skips
+        NaN; np.nanargmax does both.
+        """
+        subset = values[positions]
+        return int(positions[int(np.nanargmax(subset))])
+
     def _cluster_loci_from_arrays(
         self,
         labels: list,
@@ -971,6 +997,26 @@ class UMeccClassifier:
             q_end_all = group["q_end"].to_numpy() if "q_end" in group.columns else None
             mapq_all = group["mapq"].to_numpy() if "mapq" in group.columns else None
             identity_all = group["identity"].to_numpy() if "identity" in group.columns else None
+            chr_all = (
+                group[ColumnStandard.CHR].to_numpy()
+                if ColumnStandard.CHR in group.columns
+                else None
+            )
+            start0_all = (
+                group[ColumnStandard.START0].to_numpy()
+                if ColumnStandard.START0 in group.columns
+                else None
+            )
+            end0_all = (
+                group[ColumnStandard.END0].to_numpy()
+                if ColumnStandard.END0 in group.columns
+                else None
+            )
+            alen_all = (
+                group["alignment_length"].to_numpy()
+                if "alignment_length" in group.columns
+                else None
+            )
             locus_positions = loci_positions
 
             locus_cov: dict[int, float] = {}
@@ -1067,17 +1113,16 @@ class UMeccClassifier:
                     ]
                 )
                 for lid in full_loci:
-                    idxs = loci[lid]
-                    locus_df = group.loc[idxs]
-                    if locus_df.empty:
+                    locus_pos = locus_positions.get(lid)
+                    if not locus_pos:
                         continue
                     try:
-                        best_idx = locus_df["alignment_length"].idxmax()
-                        rep_row = locus_df.loc[best_idx]
+                        if alen_all is None:
+                            raise ValueError("alignment_length column missing")
+                        rep_pos = self._argmax_position(alen_all, locus_pos)
                     except (ValueError, KeyError):
-                        if locus_df.empty:
-                            continue
-                        rep_row = locus_df.iloc[0]
+                        rep_pos = locus_pos[0]
+                    rep_row = group.iloc[rep_pos]
 
                     mecc_rows.append(self._build_classification_row(
                         rep_row, "Mecc", ">=2 loci with full ring coverage",
@@ -1090,13 +1135,15 @@ class UMeccClassifier:
             if u_cov >= theta_u and u_cov_2nd <= theta_u2_max:
                 # Uecc requires one strong locus explanation and no substantial 2nd locus.
                 lid = best_lid if best_lid is not None else cov_sorted[0][0]
-                locus_df = group.loc[loci[lid]]
-                # Safety check: skip if locus_df is empty
-                if locus_df.empty:
+                locus_pos = locus_positions.get(lid)
+                # Safety check: skip if the locus has no rows
+                if not locus_pos:
                     continue
                 # Always compute best locus MAPQ for adaptive thresholds
                 try:
-                    best_locus_mapq = int(locus_df["mapq"].max())
+                    if mapq_all is None:
+                        raise ValueError("mapq column missing")
+                    best_locus_mapq = int(np.nanmax(mapq_all[locus_pos]))
                 except (TypeError, ValueError):
                     best_locus_mapq = None
                 # Check MAPQ minimum if configured
@@ -1106,10 +1153,12 @@ class UMeccClassifier:
                             "uecc_vetoed_low_mapq", 0
                         ) + 1
                         continue
-                best_chr = str(locus_df[ColumnStandard.CHR].iloc[0])
+                best_chr = str(chr_all[locus_pos][0]) if chr_all is not None else ""
                 try:
-                    best_start0 = int(locus_df[ColumnStandard.START0].min())
-                    best_end0 = int(locus_df[ColumnStandard.END0].max())
+                    if start0_all is None or end0_all is None:
+                        raise ValueError("locus coordinate columns missing")
+                    best_start0 = int(np.nanmin(start0_all[locus_pos]))
+                    best_end0 = int(np.nanmax(end0_all[locus_pos]))
                 except (TypeError, ValueError):
                     best_start0 = 0
                     best_end0 = 0
@@ -1138,12 +1187,12 @@ class UMeccClassifier:
                 ):
                     continue
                 try:
-                    best_idx = locus_df["alignment_length"].idxmax()
-                    rep_row = locus_df.loc[best_idx]
+                    if alen_all is None:
+                        raise ValueError("alignment_length column missing")
+                    rep_pos = self._argmax_position(alen_all, locus_pos)
                 except (ValueError, KeyError):
-                    if locus_df.empty:
-                        continue
-                    rep_row = locus_df.iloc[0]
+                    rep_pos = locus_pos[0]
+                rep_row = group.iloc[rep_pos]
 
                 mapq_best, mapq_min, identity_best, identity_min = locus_evidence(lid)
                 denom = float(max(theta_u2_max, 0.05))

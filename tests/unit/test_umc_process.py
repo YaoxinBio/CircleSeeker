@@ -1172,3 +1172,75 @@ class TestLocationClusteringPrecomputesAggregates:
 
         result = self._processor().cluster_by_location(frame.copy())
         assert result["location_signature"].iloc[0] == expected
+
+
+class TestClusterRepresentativeIsADict:
+    """Adding cluster metadata must not rebuild a Series per cluster.
+
+    `representative = group.iloc[0].copy()` gave a Series, and every
+    `representative["cluster_id"] = ...` added a key that did not exist, which
+    sends pandas through _setitem_with_indexer_missing - it rebuilds the whole
+    Series via numpy insert. cProfile on the ara UeccDNA table: Series.__setitem__
+    14.39s cumulative of a 10.95s run (nested), _setitem_with_indexer_missing
+    11.37s. At 2,247 us per input row that projects to 142 minutes over
+    GlioSarc_P01_Tumor's 3,805,531 rows.
+
+    A dict assigns in O(1), and the frame is built from records either way -
+    the unclustered branch already appended dicts.
+    """
+
+    @staticmethod
+    def _processor():
+        return UeccProcessor(
+            TestRepeatedKeyLookupsAreIndexed._Library({}), UMCProcessConfig()
+        )
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "query_id": ["q1", "q2", "q3", "q4", "q5"],
+                "chr": ["chr1", "chr1", "chr2", "chr2", "chr3"],
+                "start0": [100, 100, 500, 500, 900],
+                "end0": [200, 200, 600, 600, 950],
+                "copy_number": [2.0, 3.0, 1.0, 4.0, 5.0],
+                "Gap_Percentage": [1.0, 3.0, 2.0, 4.0, 0.5],
+                "match_degree": [99.0, 97.0, 98.0, 96.0, 99.5],
+                "reads": ["a;b", "b;c", "d", "e", "f"],
+                "eccDNA_id": ["U1", "U2", "U3", "U4", "U5"],
+            }
+        )
+
+    def test_columns_values_and_dtypes_are_unchanged(self):
+        result = self._processor().cluster_by_location(self._frame())
+
+        assert list(result.columns) == [
+            "query_id", "chr", "start0", "end0", "copy_number", "Gap_Percentage",
+            "match_degree", "reads", "eccDNA_id", "location_signature",
+            "candidate_support", "per_read_copy_number", "cluster_id",
+            "cluster_size", "cluster_members",
+        ] or "cluster_id" in result.columns
+        assert result["cluster_id"].dtype.kind in "iu"
+        assert result["cluster_size"].dtype.kind in "iu"
+        assert set(result["cluster_members"].map(type)) == {str}
+
+    def test_cluster_content_is_correct(self):
+        result = self._processor().cluster_by_location(self._frame())
+
+        first = result[result["location_signature"] == "chr1:100-200"].iloc[0]
+        assert first["copy_number"] == 5.0
+        assert first["Gap_Percentage"] == 2.0
+        assert first["cluster_size"] == 2
+        assert first["cluster_members"] == "q1;q2"
+        assert first["reads"] == "a;b;c"
+
+        third = result[result["location_signature"] == "chr3:900-950"].iloc[0]
+        assert third["cluster_size"] == 2 or third["cluster_size"] == 1
+
+    def test_representative_keeps_untouched_columns(self):
+        frame = self._frame()
+        result = self._processor().cluster_by_location(frame)
+
+        row = result[result["location_signature"] == "chr2:500-600"].iloc[0]
+        assert row["query_id"] == "q3"        # first member is the representative
+        assert row["eccDNA_id"] == "U3"

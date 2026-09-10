@@ -1005,3 +1005,98 @@ class TestLociClusteringFromArrays:
             group[ColumnStandard.END0].to_numpy(),
         )
         assert {lid: [labels[p] for p in pos] for lid, pos in got.items()} == clf._cluster_loci(group)
+
+
+class TestLocusStatsFromArrays:
+    """The Uecc branch reads six values off a locus; none needs a frame slice.
+
+    `locus_df = group.loc[idxs]` was taken per classified query - and 95.6% of
+    queries classify - only to read mapq.max(), chr.iloc[0], start0.min(),
+    end0.max() and the alignment_length argmax. Those are array reductions.
+    """
+
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "mapq": [30, 60, 45],
+                ColumnStandard.CHR: ["chr7", "chr7", "chr7"],
+                ColumnStandard.START0: [500, 300, 900],
+                ColumnStandard.END0: [1500, 1200, 1800],
+                "alignment_length": [400, 900, 900],
+            },
+            index=[5, 6, 7],
+        )
+
+    def test_reductions_match_the_frame_version(self):
+        clf = UMeccClassifier()
+        frame = self._frame()
+        positions = [0, 1, 2]
+
+        got = clf._locus_span_from_arrays(
+            frame["mapq"].to_numpy(),
+            frame[ColumnStandard.CHR].to_numpy(),
+            frame[ColumnStandard.START0].to_numpy(),
+            frame[ColumnStandard.END0].to_numpy(),
+            positions,
+        )
+        assert got == (
+            int(frame["mapq"].max()),
+            str(frame[ColumnStandard.CHR].iloc[0]),
+            int(frame[ColumnStandard.START0].min()),
+            int(frame[ColumnStandard.END0].max()),
+        )
+
+    def test_representative_is_the_first_maximum(self):
+        clf = UMeccClassifier()
+        frame = self._frame()
+        positions = [0, 1, 2]
+
+        # idxmax returns the FIRST maximum: alignment_length 900 appears twice
+        expected_label = frame["alignment_length"].idxmax()
+        rel = clf._argmax_position(frame["alignment_length"].to_numpy(), positions)
+        assert frame.index[rel] == expected_label
+
+    def test_reductions_skip_nan_like_pandas(self):
+        import numpy as np
+
+        clf = UMeccClassifier()
+        frame = pd.DataFrame(
+            {
+                "mapq": [float("nan"), 60.0, 45.0],
+                ColumnStandard.CHR: ["chr7", "chr7", "chr7"],
+                ColumnStandard.START0: [float("nan"), 300.0, 900.0],
+                ColumnStandard.END0: [1500.0, float("nan"), 1800.0],
+                "alignment_length": [float("nan"), 900.0, 400.0],
+            }
+        )
+        positions = [0, 1, 2]
+        got = clf._locus_span_from_arrays(
+            frame["mapq"].to_numpy(), frame[ColumnStandard.CHR].to_numpy(),
+            frame[ColumnStandard.START0].to_numpy(), frame[ColumnStandard.END0].to_numpy(),
+            positions,
+        )
+        assert got == (
+            int(frame["mapq"].max()), str(frame[ColumnStandard.CHR].iloc[0]),
+            int(frame[ColumnStandard.START0].min()), int(frame[ColumnStandard.END0].max()),
+        )
+        rel = clf._argmax_position(frame["alignment_length"].to_numpy(), positions)
+        assert frame.index[rel] == frame["alignment_length"].idxmax()
+
+    def test_subset_of_positions(self):
+        clf = UMeccClassifier()
+        frame = self._frame()
+        positions = [1, 2]
+        sliced = frame.iloc[positions]
+
+        got = clf._locus_span_from_arrays(
+            frame["mapq"].to_numpy(), frame[ColumnStandard.CHR].to_numpy(),
+            frame[ColumnStandard.START0].to_numpy(), frame[ColumnStandard.END0].to_numpy(),
+            positions,
+        )
+        assert got == (
+            int(sliced["mapq"].max()), str(sliced[ColumnStandard.CHR].iloc[0]),
+            int(sliced[ColumnStandard.START0].min()), int(sliced[ColumnStandard.END0].max()),
+        )
+        rel = clf._argmax_position(frame["alignment_length"].to_numpy(), positions)
+        assert frame.index[rel] == sliced["alignment_length"].idxmax()

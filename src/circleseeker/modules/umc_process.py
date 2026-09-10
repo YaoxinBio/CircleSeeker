@@ -366,8 +366,12 @@ class UeccProcessor(BaseEccProcessor):
                 cluster_id += 1
                 cluster_size = len(group)
 
-                # Use first row as representative
-                representative = group.iloc[0].copy()
+                # Use first row as representative. A dict, not a Series: every
+                # assignment below adds a key the Series does not have, and
+                # pandas rebuilds the whole Series for each of those through
+                # _setitem_with_indexer_missing. The frame is built from records
+                # regardless - the unclustered branch already appends dicts.
+                representative = group.iloc[0].to_dict()
 
                 # Aggregate copy_number
                 if has_copynum:
