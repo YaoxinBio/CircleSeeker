@@ -25,6 +25,7 @@ import logging
 from circleseeker.utils.logging import get_logger
 import re
 import shutil
+import time
 from collections import defaultdict
 from pathlib import Path
 from circleseeker.utils.read_support import support_fields
@@ -1054,6 +1055,74 @@ class EccDedup:
 
         return df
 
+    def _attach_cluster_support(
+        self,
+        source: pd.DataFrame,
+        result: pd.DataFrame,
+        dtype: str,
+        *,
+        update_repeat_number: bool = False,
+    ) -> pd.DataFrame:
+        """Aggregate each cluster once, then align support fields in bulk.
+
+        Uecc has one representative row per cluster; Mecc/Cecc can have several.
+        Mapping by cluster preserves the existing row order and broadcasts the
+        same support to every representative segment. Missing copy totals must
+        not replace values retained from the representative.
+        """
+        if source.empty or result.empty:
+            return result
+
+        read_names: dict[Any, str] = {}
+        if ColumnStandard.READS in result.columns:
+            first_rows = result[["cluster_id", ColumnStandard.READS]].drop_duplicates(
+                "cluster_id", keep="first"
+            )
+            read_names = dict(
+                zip(first_rows["cluster_id"], first_rows[ColumnStandard.READS].astype(str))
+            )
+
+        grouped = source.groupby("cluster_id", sort=False)
+        total = grouped.ngroups
+        started = time.monotonic()
+        self.logger.info("%s support aggregation: %s clusters", dtype, f"{total:,}")
+        records = []
+        for number, (cluster_id, group) in enumerate(grouped, 1):
+            reads = read_names[cluster_id] if ColumnStandard.READS in result.columns else ""
+            fields = support_fields(group, reads)
+            records.append((cluster_id, fields["candidate_support"],
+                            fields["per_read_copy_number"], fields["copy_number"]))
+            if number % 10000 == 0 or number == total:
+                self.logger.info(
+                    "%s support aggregation: %s/%s clusters (%.1fs)",
+                    dtype, f"{number:,}", f"{total:,}", time.monotonic() - started,
+                )
+
+        updates = pd.DataFrame.from_records(
+            records,
+            columns=["cluster_id", "candidate_support", "per_read_copy_number", "copy_number"],
+        ).set_index("cluster_id")
+        for column in ("candidate_support", "per_read_copy_number"):
+            values = result["cluster_id"].map(updates[column])
+            if column in result.columns:
+                matched = result["cluster_id"].isin(updates.index)
+                result.loc[matched, column] = values.loc[matched]
+            else:
+                result[column] = values
+
+        copies = result["cluster_id"].map(updates["copy_number"])
+        known = copies.notna()
+        if known.any():
+            result.loc[known, ColumnStandard.COPY_NUMBER] = copies.loc[known]
+            if update_repeat_number:
+                result.loc[known, "repeat_number"] = copies.loc[known]
+
+        self.logger.info(
+            "%s support aggregation and writeback completed (%.1fs)",
+            dtype, time.monotonic() - started,
+        )
+        return result
+
     def process_uecc(self, df: pd.DataFrame, clusters: CDHitClusters, dtype: str) -> pd.DataFrame:
         """Process Uecc data: one representative row per cluster."""
         if df.empty:
@@ -1197,15 +1266,7 @@ class EccDedup:
         if not had_copy_num_input and "repeat_number" in result.columns:
             result[ColumnStandard.COPY_NUMBER] = result["repeat_number"]
 
-        for cluster_id, group in df.groupby("cluster_id", sort=False):
-            mask = result["cluster_id"] == cluster_id
-            read_names = str(result.loc[mask, ColumnStandard.READS].iloc[0]) if ColumnStandard.READS in result else ""
-            fields = support_fields(group, read_names)
-            for name, value in fields.items():
-                if name != "copy_number" or pd.notna(value):
-                    result.loc[mask, name] = value
-            if pd.notna(fields["copy_number"]):
-                result.loc[mask, "repeat_number"] = fields["copy_number"]
+        result = self._attach_cluster_support(df, result, dtype, update_repeat_number=True)
 
         result = self._finalize_dataframe(result, dtype)
         return result
@@ -1348,12 +1409,7 @@ class EccDedup:
             result["cluster_id"].map(merged_ids).fillna(result[ColumnStandard.ECCDNA_ID])
         )
         result["orig_eccdna_id"] = result[ColumnStandard.ECCDNA_ID]
-        for cluster_id, group in full_df.groupby("cluster_id", sort=False):
-            mask = result["cluster_id"] == cluster_id
-            read_names = str(result.loc[mask, ColumnStandard.READS].iloc[0]) if ColumnStandard.READS in result else ""
-            for name, value in support_fields(group, read_names).items():
-                if name != "copy_number" or pd.notna(value):
-                    result.loc[mask, name] = value
+        result = self._attach_cluster_support(full_df, result, dtype)
 
         result = self._finalize_dataframe(result, dtype)
 
