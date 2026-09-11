@@ -1038,6 +1038,7 @@ class SplitReadsCore:
         # neighbours in set order rather than edge insertion order, which
         # changes what cycle_basis returns.
         undirected_graph = G.to_undirected()
+        node_order = {node: i for i, node in enumerate(undirected_graph)}
         subgraphs = list(nx.connected_components(undirected_graph))
 
         self.logger.info(f"Found {len(subgraphs)} potential circular subgraphs")
@@ -1050,7 +1051,7 @@ class SplitReadsCore:
         for idx, comp_nodes in enumerate(subgraphs, start=1):
             tup = self._resolve_component_regions(
                 idx, comp_nodes, G, dict_pair_strand, dict_majority_strand,
-                undirected_graph=undirected_graph,
+                undirected_graph=undirected_graph, node_order=node_order,
             )
             if tup[1]:
                 list_graph_summary.append(tup)
@@ -1085,7 +1086,11 @@ class SplitReadsCore:
         return eccdna_final_path
 
     @staticmethod
-    def _undirected_component(undirected_graph: "nx.MultiGraph", comp_nodes: set) -> Any:
+    def _undirected_component(
+        undirected_graph: "nx.MultiGraph",
+        comp_nodes: set,
+        node_order: "Optional[dict]" = None,
+    ) -> Any:
         """Induce one component, with a node order that does not depend on hashing.
 
         `undirected_graph.subgraph(nodes)` returns a view whose iteration goes
@@ -1115,16 +1120,22 @@ class SplitReadsCore:
         reproduces it node for node and neighbour for neighbour. Membership,
         edges, parallel edges, self-loops, degrees and attributes are the
         view's.
+
+        `node_order` maps each node of the parent to its position, built once
+        for the whole loop. Without it this walks the parent twice per
+        component, which is O(components x graph) all over again - 19,125
+        components against the GlioSarc graph. Sorting the component's own
+        members by that position visits the same nodes in the same order.
         """
         induced = type(undirected_graph)()
         wanted = set(comp_nodes)
-        for node in undirected_graph:
-            if node in wanted:
-                induced.add_node(node, **undirected_graph.nodes[node])
+        if node_order is None:
+            node_order = {node: i for i, node in enumerate(undirected_graph)}
+        members = sorted(wanted, key=node_order.__getitem__)
+        for node in members:
+            induced.add_node(node, **undirected_graph.nodes[node])
         seen: set = set()
-        for left in undirected_graph:
-            if left not in wanted:
-                continue
+        for left in members:
             for right, keyed in undirected_graph.adj[left].items():
                 if right not in wanted or (right in seen and right != left):
                     continue
@@ -1141,14 +1152,18 @@ class SplitReadsCore:
         dict_pair_strand: dict[tuple[str, str], set[str]],
         dict_majority_strand: dict[str, str],
         undirected_graph: "Optional[nx.MultiGraph]" = None,
+        node_order: "Optional[dict]" = None,
     ) -> tuple:
         """Resolve region string with strand info for one connected component."""
         gname = f"ec{idx}"
-        # The undirected conversion is passed in, built once for the whole
-        # loop; converting per component was O(components x full_graph).
+        # The undirected conversion and the node-order index are passed in,
+        # built once for the whole loop; doing either per component was
+        # O(components x full_graph).
         if undirected_graph is None:
             undirected_graph = G.to_undirected()
-        subgraph = SplitReadsCore._undirected_component(undirected_graph, comp_nodes)
+        subgraph = SplitReadsCore._undirected_component(
+            undirected_graph, comp_nodes, node_order
+        )
         nodes = list(subgraph.nodes())
 
         regions, num_nodes, can_be_solved, contain_selfloop, is_cyclic = chk_circular_subgraph(

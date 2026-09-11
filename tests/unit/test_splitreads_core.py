@@ -1359,3 +1359,57 @@ class TestStrandChoiceIsDeterministic:
 
     def test_a_single_orientation_is_unaffected(self):
         assert self._one_node_regions(["-_-"]) == "chrA_10_200_-"
+
+
+class TestComponentInductionDoesNotWalkTheWholeGraph:
+    """Inducing a component must cost the component, not the graph.
+
+    The first version of this fix walked the parent's node order twice per
+    component to reproduce it. That is O(components x graph) - the same shape
+    as the per-component `to_undirected()` it replaced, and GlioSarc has 19,125
+    components. Sorting the component's own members by a position index built
+    once for the loop visits the same nodes in the same order.
+    """
+
+    @staticmethod
+    def _graph():
+        graph = nx.MultiGraph()
+        for index in range(300):
+            graph.add_edge(f"chr1_{index}_a", f"chr1_{index}_b", weight=3)
+        return graph
+
+    def test_the_parent_is_never_iterated_when_the_index_is_given(self):
+        class NoIteration(nx.MultiGraph):
+            def __iter__(self):
+                raise AssertionError("the parent graph was walked per component")
+
+        graph = NoIteration()
+        graph.add_edges_from(self._graph().edges(data=True))
+        order = {node: i for i, node in enumerate(nx.MultiGraph(graph))}
+        component = {"chr1_7_a", "chr1_7_b"}
+
+        induced = SplitReadsCore._undirected_component(graph, component, order)
+
+        assert list(induced.nodes()) == ["chr1_7_a", "chr1_7_b"]
+        assert induced.number_of_edges() == 1
+
+    def test_the_index_gives_the_same_graph_as_walking_the_parent(self):
+        graph = self._graph()
+        order = {node: i for i, node in enumerate(graph)}
+        for component in nx.connected_components(graph):
+            with_index = SplitReadsCore._undirected_component(graph, component, order)
+            without = SplitReadsCore._undirected_component(graph, component)
+            assert list(with_index.nodes()) == list(without.nodes())
+            assert list(with_index.edges(keys=True)) == list(without.edges(keys=True))
+
+    def test_node_order_follows_the_parent_not_the_sort(self):
+        graph = nx.MultiGraph()
+        for left, right in [("n9", "n1"), ("n1", "n3"), ("n3", "n9")]:
+            graph.add_edge(left, right, weight=1)
+        order = {node: i for i, node in enumerate(graph)}
+        component = set(graph.nodes())
+
+        induced = SplitReadsCore._undirected_component(graph, component, order)
+
+        assert list(induced.nodes()) == list(graph)
+        assert list(induced.nodes()) != sorted(component)

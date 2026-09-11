@@ -24,7 +24,7 @@ not. See CHANGELOG.md.
 | `055110f531a9e08936f8c526da5c71950a6bbcee` | Rejected preliminary repair; its dataset batch and prior release draft are obsolete |
 | `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repair used for 59 completed runs and the first eight GS steps |
 | `1.5.1+ceccfix.20260908` / `a662ad74e1cf984af0417017a36572e3a725c934` | Performance-only support aggregation change; GS resumes at step 9 from its completed CD-HIT checkpoint |
-| v1.5.2 / `cb397f41ab491dbb2becdcdb559988374d2956d6` | Release source. Differs from `a662ad7` in eleven files: two reproducibility fixes and the scale work that let GlioSarc_P01_Tumor finish. Verified against an unoptimised baseline - seven deliverables byte-identical - and reproducible across runs. `scripts/check_release_metadata.py` names the eleven files and records that the source is **not** identical to the analysis baseline |
+| v1.5.2 / `e7e9ed00730c5a73d4fcc206226c433eedeec5aa` | Release source. Differs from `a662ad7` in eleven files: the reproducibility fixes and the scale work that let GlioSarc_P01_Tumor finish. Verified against an unoptimised baseline - seven deliverables byte-identical - and reproducible across runs. `scripts/check_release_metadata.py` names the eleven files and records that the source is **not** identical to the analysis baseline |
 
 The release comparison excludes only `src/circleseeker/__version__.py` when
 checking algorithm-source equality. Rebuilding with the repair commit is not

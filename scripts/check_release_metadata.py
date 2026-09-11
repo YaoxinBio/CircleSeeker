@@ -37,7 +37,7 @@ EXPECTED_CHANGES: dict[str, str] = {
     "src/circleseeker/modules/ecc_packager.py": "f3642ff047aabd8015403cf590fc075df7ff42d0402f3b1529ed3a0a6b0e5169",
     "src/circleseeker/modules/ecc_summary.py": "56c594bd9c3e1d0a245a35feab587f9afc30eaf3b1817b4ebf29acd105c8cd83",
     "src/circleseeker/modules/ecc_unify.py": "57b5858d73adb8ce61e16f0f2b1fa053a4fef23b05c04a30f83390105ea3e530",
-    "src/circleseeker/modules/splitreads_core.py": "c0188bbedc9ffa3640fcfabacd5d7524e39bb11f46a805cfe26ca3427b536334",
+    "src/circleseeker/modules/splitreads_core.py": "8a0cdbfdd5ba7aad9da7bf772ad89ce38d23a942a3e459aabad940ba936896fa",
     "src/circleseeker/modules/tandem_to_ring.py": "221bedeb1ead909c87c738763dbfe79359d0d115c5e03067a093e6795f2b6391",
     "src/circleseeker/modules/um_classify.py": "5d5576f2dd1da96e4c58284f3d07147ef0c14e2c5493c1483fe24b89b3d3743c",
     "src/circleseeker/modules/umc_process.py": "72d448cc0a249e2b4921a9f03e8df86ae3d113a46b625d874a22e0414d2743c4",

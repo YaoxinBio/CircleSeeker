@@ -37,7 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and now measures 15.9 minutes; `ecc_summary` goes from ~88 to 34.1 minutes.
   Every change was verified equivalent against the code it replaced, and the
   seven deliverables are byte-identical to a build with none of them applied.
-  Accuracy against the simulation truth set is unchanged from v1.5.0.
+  Against the Arabidopsis simulation truth set the calls are unchanged from
+  the commit the completed analyses ran on (44c79b8, 1.5.1+ceccfix) - the
+  same recall and the same supported fraction, class by class. That is not
+  a comparison with v1.5.0, which predates the CeccDNA repairs.
 
 ### Fixed
 
