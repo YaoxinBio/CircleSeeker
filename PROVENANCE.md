@@ -4,9 +4,17 @@ CircleSeeker is maintained at https://github.com/YaoxinBio/CircleSeeker.
 Its original authors are Yaoxin Zhang and Leo Xinqi Yu. Original copyright,
 contributor identities, commit hashes and license terms are retained.
 
-The historical repository is https://github.com/leoxqy/CircleSeeker. Its existing
-releases remain historical releases, including v1.0.0 and v1.5.1. The current
-repository continues that version sequence; it does not redefine those versions.
+Development up to v1.5.1 took place in a repository that is being retired. Its
+releases - v1.0.0, v1.1.1, v1.1.2, v1.5.0 and v1.5.1 - remain historical releases
+and their tags are preserved here; this repository continues that version
+sequence and does not redefine those versions. Releases published to Bioconda
+under those version numbers were built from those same tags.
+
+v1.5.0 is the version benchmarked in the accompanying manuscript. v1.5.2 is the
+first release made from this repository; it corrects two defects that made
+deliverables vary between runs of identical code on identical input, so results
+produced with v1.5.2 are reproducible where results from earlier versions were
+not. See CHANGELOG.md.
 
 ## Version correspondence
 
@@ -16,7 +24,7 @@ repository continues that version sequence; it does not redefine those versions.
 | `055110f531a9e08936f8c526da5c71950a6bbcee` | Rejected preliminary repair; its dataset batch and prior release draft are obsolete |
 | `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repair used for 59 completed runs and the first eight GS steps |
 | `1.5.1+ceccfix.20260908` / `a662ad74e1cf984af0417017a36572e3a725c934` | Performance-only support aggregation change; GS resumes at step 9 from its completed CD-HIT checkpoint |
-| v1.5.2 preparation | Same implementation source as `a662ad7`; updated version, packaging and documentation; formal publication pending |
+| v1.5.2 / `cb397f41ab491dbb2becdcdb559988374d2956d6` | Release source. Differs from `a662ad7` in eleven files: two reproducibility fixes and the scale work that let GlioSarc_P01_Tumor finish. Verified against an unoptimised baseline - seven deliverables byte-identical - and reproducible across runs. `scripts/check_release_metadata.py` names the eleven files and records that the source is **not** identical to the analysis baseline |
 
 The release comparison excludes only `src/circleseeker/__version__.py` when
 checking algorithm-source equality. Rebuilding with the repair commit is not

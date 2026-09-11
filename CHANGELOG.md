@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2] - Unreleased
 
+### Fixed - reproducibility
+
+- **Deliverables no longer vary between runs.** Two places let the iteration
+  order of a set of strings decide a written result, and string hashing is
+  seeded per process, so identical code on identical input reported different
+  structures for the same inferred multi-segment CeccDNA:
+  - `splitreads_core` read a component's nodes from `subgraph()`, whose view
+    iterates a set whenever the component holds less than half the graph - that
+    is, always, on real data. The induced graph is now built by walking the
+    parent graph's own order, which is a property of the graph rather than of
+    the process. Where networkx's view was already deterministic the two agree
+    on node order, edge order, degrees, self-loops and `cycle_basis` exactly.
+  - `dict_pair_strand` maps a region pair to a set of strand strings; a pair
+    with both tandem and inverted evidence holds more than one, and the one
+    picked was written into `merge_region`. Now sorted before use.
+
+  Verified end to end: two runs under different random hash seeds and an
+  unoptimised baseline produce byte-identical deliverables. Results no longer
+  depend on `PYTHONHASHSEED` or on thread count. Structures reported for
+  inferred multi-segment CeccDNA may differ from those of earlier versions,
+  which selected among equally valid solutions arbitrarily.
+
+### Changed - performance
+
+- Scale fixes across ten modules removed the per-item pandas overhead behind the
+  stalls on large samples; a full GlioSarc_P01_Tumor run goes from roughly 51 to
+  roughly 14 hours. `ecc_packager` was the blocker at an extrapolated ~30 hours
+  and now measures 15.9 minutes; `ecc_summary` goes from ~88 to 34.1 minutes.
+  Every change was verified equivalent against the code it replaced, and the
+  seven deliverables are byte-identical to a build with none of them applied.
+  Accuracy against the simulation truth set is unchanged from v1.5.0.
+
 ### Fixed
+
 - Remove per-cluster full-table scans from support aggregation, preserving candidate/RCA accounting and adding progress logging for large datasets.
 - Keep repeat-candidate identity, representative sequence, length and RCA support linked.
 - Preserve directed circular segment order through classification and structural deduplication.
