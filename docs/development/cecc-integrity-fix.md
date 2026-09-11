@@ -7,10 +7,10 @@ based on `055110f` is obsolete. Final publication and replacement of archived
 analyses require separate acceptance.
 
 The dataset rebuild uses the frozen internal version `1.5.1+ceccfix.20260908`.
-The release preparation identifies itself as `1.5.2`; its algorithm source is
+The release preparation identified itself as `1.5.2` at the time; it ships as 1.6.0. its algorithm source is
 compared to that repair commit, excluding only `__version__.py`. Historical tags
 and results retain their original identities. See [provenance](../../PROVENANCE.md)
-and the [release notes](../releases/v1.5.2.md).
+and the [release notes](../releases/v1.6.0.md).
 
 The 2026-09-08 audit replayed 59 supporting raw reads for 52 flagged Cecc
 records. All 52 reproduced the historical wrong sequence and coordinates while

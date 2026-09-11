@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check release metadata and the diff against the analysis baseline.
 
-1.5.2 was prepared as a packaging-only release: its computational source was
+This release was prepared as packaging-only: its computational source was
 byte-identical to the commit the completed analyses ran on, and this script
 asserted exactly that. That is no longer true. Two defects were found that made
 deliverables vary between runs of identical code on identical input, and fixing
@@ -68,7 +68,7 @@ def main() -> None:
                 if isinstance(node, ast.Assign)
                 and any(isinstance(target, ast.Name) and target.id == "__version__"
                         for target in node.targets)]
-    if versions != ["1.5.2"]:
+    if versions != ["1.6.0"]:
         raise SystemExit("Unexpected release version")
     version = versions[0]
     for filename, pattern in [

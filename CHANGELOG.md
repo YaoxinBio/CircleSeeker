@@ -5,7 +5,14 @@ All notable changes to CircleSeeker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.5.2] - Unreleased
+## [1.6.0] - Unreleased
+
+Numbered 1.6.0 rather than 1.5.2: this release changes what gets written.
+Inferred multi-segment CeccDNA structures are now chosen deterministically
+rather than by whatever the hash seed happened to pick, so a result produced
+here can differ from one produced by 1.5.x on the same input. The case-only
+`CircleSeeker` console script is also gone. A patch number would have
+understated both.
 
 ### Fixed - reproducibility
 
@@ -57,10 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Move active maintenance to YaoxinBio/CircleSeeker while preserving original authors and Git history.
-- Align package version, installation environment, citation metadata and release preparation at 1.5.2.
+- Align package version, installation environment, citation metadata and release preparation at 1.6.0.
 - Prepare release artifacts as a draft; full dataset acceptance and final archival are still pending.
 
-See [1.5.2 release notes](docs/releases/v1.5.2.md) for output compatibility and validation limits.
+See [1.6.0 release notes](docs/releases/v1.6.0.md) for output compatibility and validation limits.
 
 ## [1.1.1.dev1] - Historical development notes
 

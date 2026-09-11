@@ -1,4 +1,4 @@
-> Historical validation report for the version recorded below. These metrics are not validation results for v1.5.2; see [current release notes](releases/v1.5.2.md).
+> Historical validation report for the version recorded below. These metrics are not validation results for v1.6.0; see [current release notes](releases/v1.6.0.md).
 
 # CircleSeeker Batch Validation Report
 
