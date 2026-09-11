@@ -59,6 +59,7 @@ _min_circular_rotation = umc_module._min_circular_rotation
 _booth_min_rotation_start = umc_module._booth_min_rotation_start
 _sum_by_group = umc_module._sum_by_group
 _mean_by_group = umc_module._mean_by_group
+_row_as_dict = umc_module._row_as_dict
 
 
 class TestHelperFunctions:
@@ -1307,3 +1308,69 @@ class TestGroupAggregationMatchesPandasBitForBit:
         means, counts = _mean_by_group(frame["val"], groups.indices)
         assert counts["a"] == 0
         assert pd.isna(means["a"])
+
+
+class TestGroupAggregationRefusesDtypesItCannotReproduce:
+    """The numpy fast path is only equal to pandas for the plain numpy dtypes.
+
+    `Int64.to_numpy()` widens to float64 as soon as a value is missing, so an
+    integer sum would come back as a float - "8.0" where the column wrote "8" -
+    and lose exactness above 2**53. pandas also reduces the masked dtypes over
+    their mask, which is a different sum. Those columns keep the pandas path.
+    """
+
+    @staticmethod
+    def _one_group(column):
+        pos = {"g": np.arange(len(column))}
+        return _sum_by_group(column, pos)["g"], _mean_by_group(column, pos)[0]["g"]
+
+    def test_nullable_integer_keeps_its_type(self):
+        column = pd.Series([5, None, 3], dtype="Int64")
+        total, _ = self._one_group(column)
+        assert total == column.sum()
+        assert type(total) is type(column.sum())
+
+    def test_nullable_integer_stays_exact_above_2_53(self):
+        column = pd.Series([2**53 + 1, None, 1], dtype="Int64")
+        total, _ = self._one_group(column)
+        assert total == column.sum() == 2**53 + 2
+
+    def test_masked_float_reduces_over_the_mask(self):
+        column = pd.Series([24.92, None, 86.9, 42.33], dtype="Float64")
+        total, _ = self._one_group(column)
+        assert total == column.sum()
+
+    def test_integer_mean_accumulates_in_float64_like_pandas(self):
+        """Summing as int64 first would wrap; pandas' nanmean does not."""
+        column = pd.Series([2**62, 2**62], dtype="int64")
+        _, mean = self._one_group(column)
+        assert mean == column.mean()
+        assert mean > 0
+
+    def test_float32_mean_keeps_float32_like_pandas(self):
+        column = pd.Series([0.85, 0.27, 8.65, 7.53, 8.37, 5.38], dtype="float32")
+        _, mean = self._one_group(column)
+        assert mean == column.dropna().mean()
+        assert round(mean, 2) == round(column.dropna().mean(), 2)
+
+
+class TestRepresentativeRowKeepsScalarTypes:
+    """`Series.to_dict()` boxes values into Python scalars; the frame rebuilt
+    from those dicts then writes 99.0999984741211 where the row wrote 99.1."""
+
+    def test_a_reduced_precision_float_survives_the_round_trip(self):
+        frame = pd.DataFrame({"q": ["q1"], "identity": pd.Series([99.1], dtype="float32")})
+        row = frame.iloc[0]
+
+        kept = _row_as_dict(row)
+
+        assert type(kept["identity"]) is type(row.copy()["identity"])
+        assert pd.DataFrame([kept]).to_csv(index=False) == pd.DataFrame(
+            [dict(row.copy())]
+        ).to_csv(index=False)
+
+    def test_to_dict_would_not_have(self):
+        """Guard the guard: if to_dict ever stops boxing, this test is moot."""
+        frame = pd.DataFrame({"q": ["q1"], "identity": pd.Series([99.1], dtype="float32")})
+        row = frame.iloc[0]
+        assert type(row.to_dict()["identity"]) is not type(row.copy()["identity"])

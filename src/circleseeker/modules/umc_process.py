@@ -36,11 +36,36 @@ class UMCProcessConfig:
     debug: bool = False
 
 
+def _row_as_dict(row: "pd.Series") -> dict:
+    """One row as a dict, keeping the scalar types the row held.
+
+    `Series.to_dict()` boxes each value into its Python equivalent, so a
+    np.float32 becomes a Python float and the frame rebuilt from these dicts
+    writes 99.0999984741211 where the original wrote 99.1. Zipping the values
+    straight off the array keeps the numpy scalar, which is what slicing the
+    row used to give.
+    """
+    return dict(zip(row.index, row.to_numpy()))
+
+
 def _sanitize_fasta_id(id_str: str) -> str:
     """Sanitize a string to be a valid FASTA identifier."""
     id_str = re.sub(r"\s+", "_", str(id_str))
     id_str = re.sub(r"[^A-Za-z0-9._-]", "_", id_str)
     return id_str
+
+
+def _is_plain_numeric(column: pd.Series) -> bool:
+    """True for the numpy int/float dtypes these helpers reproduce exactly.
+
+    The nullable extension dtypes are excluded deliberately. `Int64.to_numpy()`
+    returns float64 once a value is missing, so an integer sum would come back
+    as a float - "8.0" where the column used to write "8" - and lose exactness
+    above 2**53; and pandas reduces the masked dtypes over their mask, which is
+    not the same sum as reducing over filled values.
+    """
+    dtype = column.dtype
+    return isinstance(dtype, np.dtype) and dtype.kind in "iuf"
 
 
 def _sum_by_group(
@@ -52,11 +77,15 @@ def _sum_by_group(
     length; a groupby kernel compensates and drops NaN, so the two disagree in
     the last bits.  Reduce the same array pandas would have reduced.
     """
-    values = column.to_numpy()
-    if not np.issubdtype(values.dtype, np.number):
-        # object columns keep the original path; there is nothing to speed up
+    if not _is_plain_numeric(column):
+        # Anything else - object, and the nullable extension dtypes whose
+        # to_numpy() silently widens Int64 to float64 - keeps the original
+        # path. There is nothing to speed up on object columns, and for the
+        # masked dtypes pandas reduces over the mask rather than over filled
+        # values, which is a different sum.
         return {key: column.iloc[pos].sum() for key, pos in positions_by_key.items()}
-    if np.issubdtype(values.dtype, np.floating):
+    values = column.to_numpy()
+    if values.dtype.kind == "f":
         filled = np.where(np.isnan(values), values.dtype.type(0), values)
     else:
         filled = values
@@ -72,20 +101,25 @@ def _mean_by_group(
     cannot share a pass with :func:`_sum_by_group` -- pairwise summation
     depends on the length of the array it walks.
     """
+    plain = _is_plain_numeric(column)
     values = column.to_numpy()
     means: dict[Any, Any] = {}
     counts: dict[Any, int] = {}
-    numeric = np.issubdtype(values.dtype, np.number)
     for key, pos in positions_by_key.items():
-        if not numeric:
-            # object columns keep the original path, exception behaviour included
+        if not plain:
+            # object and the nullable extension dtypes keep the original path,
+            # exception behaviour included
             gaps = column.iloc[pos].dropna()
             counts[key] = len(gaps)
             means[key] = gaps.mean() if len(gaps) else np.nan
             continue
         present = values[pos]
-        if np.issubdtype(values.dtype, np.floating):
+        if values.dtype.kind == "f":
             present = present[~np.isnan(present)]
+        else:
+            # pandas' nanmean accumulates integers in float64; summing them as
+            # int64 would wrap instead
+            present = present.astype(np.float64)
         counts[key] = len(present)
         means[key] = present.sum() / len(present) if len(present) else np.nan
     return means, counts
@@ -427,7 +461,7 @@ class UeccProcessor(BaseEccProcessor):
                 # pandas rebuilds the whole Series for each of those through
                 # _setitem_with_indexer_missing. The frame is built from records
                 # regardless - the unclustered branch already appends dicts.
-                representative = group.iloc[0].to_dict()
+                representative = _row_as_dict(group.iloc[0])
 
                 # Aggregate copy_number
                 if has_copynum:

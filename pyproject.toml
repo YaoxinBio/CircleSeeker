@@ -34,7 +34,12 @@ dependencies = [
     "biopython>=1.81",
     "pysam>=0.22.0",
     "pyyaml>=6.0",
-    "networkx>=3.0",
+    # 3.2 is the floor, not 3.0: cycle_basis picked its root with
+    # `set(G.nodes()).pop()` until then, and this package's graph nodes are
+    # strings, so the cycle it returned - and the region written to
+    # eccDNA_final.txt - changed with PYTHONHASHSEED. 3.2 switched to
+    # dict.fromkeys(G) + popitem(), which follows the graph's own order.
+    "networkx>=3.2",
     "packaging>=23.0",
     "intervaltree>=3.1.0",
     "pybedtools>=0.9.0",

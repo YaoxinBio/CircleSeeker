@@ -1124,3 +1124,46 @@ class TestLocusStatsFromArrays:
         )
         rel = clf._argmax_position(frame["alignment_length"].to_numpy(), positions)
         assert frame.index[rel] == sliced["alignment_length"].idxmax()
+
+
+class TestMissingGroupKeysMatchGroupby:
+    """`x != x` only recognises float NaN.
+
+    An object column carries None, for which `x != x` is False - those rows
+    would bucket together and union into one locus - and pd.NA, for which it is
+    neither True nor False and raises when used as a condition. groupby's
+    default dropna=True drops all three.
+    """
+
+    @staticmethod
+    def _buckets(missing):
+        frame = pd.DataFrame(
+            {"chr": [missing, missing, "chr1"], "strand": ["+", "+", "+"], "i": [0, 1, 2]}
+        )
+        expected = {
+            str(key): list(sub["i"])
+            for key, sub in frame.groupby(["chr", "strand"], sort=False)
+        }
+        chrom_vals = frame["chr"].to_numpy()
+        strand_vals = frame["strand"].to_numpy()
+        got: dict = {}
+        for i in range(len(frame)):
+            chrom, strand = chrom_vals[i], strand_vals[i]
+            if pd.isna(chrom) or pd.isna(strand):
+                continue
+            got.setdefault((chrom, strand), []).append(i)
+        return expected, {str(k): v for k, v in got.items()}
+
+    @pytest.mark.parametrize("missing", [np.nan, None, pd.NA], ids=["nan", "None", "pd.NA"])
+    def test_every_missing_value_is_dropped_like_groupby(self, missing):
+        expected, got = self._buckets(missing)
+        assert got == expected
+
+    @pytest.mark.parametrize("missing", [None, pd.NA], ids=["None", "pd.NA"])
+    def test_the_identity_check_would_not_have(self, missing):
+        """Guard the guard: `x != x` fails on exactly these two."""
+        try:
+            skipped = bool(missing != missing)
+        except TypeError:
+            return  # pd.NA raises, which is the failure this guards against
+        assert skipped is False

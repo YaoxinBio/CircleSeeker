@@ -307,3 +307,43 @@ def test_final_packager_rejects_sequence_length_conflict(tmp_path):
     with pytest.raises(ValueError, match="length"):
         generate_fasta_files({"C1": "ACGT"}, tmp_path, summary)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_format_output_validates_before_writing_anything(tmp_path):
+    """A bad confirmed Cecc must stop the export with the output still empty.
+
+    generate_fasta_files trusts `validated=True`, so format_output's own call is
+    the only thing standing between a wrong sequence and the written tables.
+    Calling the validation helper directly would not test that: moving the call
+    below the `to_csv` lines leaves such a test passing, and leaves the tables
+    on disk. This drives the real entry point and looks at the directory.
+    """
+    source = pd.concat([segments(), segments("C2", "readB", 5)], ignore_index=True)
+    d = EccDedup()
+    result = d.process_mecc_cecc(source, clusters(["C1", "C2"]), "Cecc")
+    result = d.merge_cecc_by_tolerance(result)
+    result = d.dedupe_cecc_segments(result)
+    result = d.renumber_eccdna_ids(result, "Cecc")
+    d.write_cecc_outputs(result, tmp_path, "test")
+    d._generate_unified_confirmed_table({"Cecc": result}, tmp_path, "test")
+
+    # truncate every ring so its length disagrees with the summary
+    fasta = tmp_path / "test_CeccDNA_C.fasta"
+    fasta.write_text(
+        "".join(
+            line if line.startswith(">") else line[:4]
+            for line in fasta.read_text().splitlines(keepends=True)
+        )
+    )
+
+    packaged = tmp_path / "packaged"
+    with pytest.raises(ValueError):
+        format_output(
+            unified_csv=tmp_path / "test_eccDNA_Confirmed.csv",
+            cecc_segments_csv=tmp_path / "test_CeccSegments.core.csv",
+            cecc_fasta=fasta,
+            output_dir=packaged,
+        )
+
+    written = [p for p in packaged.rglob("*") if p.is_file()] if packaged.exists() else []
+    assert written == [], f"files written despite the failure: {written}"

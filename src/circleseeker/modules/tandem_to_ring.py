@@ -362,7 +362,7 @@ class TandemToRing:
                 # df_simple but not here, so assigning it to a Series adds a
                 # missing key and pandas rebuilds the whole Series. Measured on
                 # this frame shape: 150.2 us per row against 25.2 us as a dict.
-                first_row = group.iloc[0].to_dict()
+                first_row = _row_as_dict(group.iloc[0])
 
                 # Sum Effective_Length and copyNum (with proper rounding)
                 first_row["Effective_Length"] = group["Effective_Length"].sum()
@@ -380,7 +380,7 @@ class TandemToRing:
                 # Other groups
                 if len(group) == 1:
                     # Single record, use simple read rules
-                    row = group.iloc[0].to_dict()
+                    row = _row_as_dict(group.iloc[0])
                     eff_length = row["Effective_Length"]
 
                     if eff_length >= 99:
@@ -561,6 +561,18 @@ class TandemToRing:
     def run(self) -> None:
         """Run the tandem-to-ring processing pipeline."""
         self.process()
+
+
+def _row_as_dict(row: "pd.Series") -> dict:
+    """One row as a dict, keeping the scalar types the row held.
+
+    `Series.to_dict()` boxes each value into its Python equivalent, so a
+    np.float32 becomes a Python float and the frame rebuilt from these dicts
+    writes 99.0999984741211 where the original wrote 99.1. Zipping the values
+    straight off the array keeps the numpy scalar, which is what slicing the
+    row used to give.
+    """
+    return dict(zip(row.index, row.to_numpy()))
 
 
 def _parse_args() -> Any:

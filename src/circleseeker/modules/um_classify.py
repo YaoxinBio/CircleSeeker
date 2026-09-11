@@ -652,10 +652,13 @@ class UMeccClassifier:
         for i in range(n):
             chrom, strand = chrom_vals[i], strand_vals[i]
             # groupby(..., dropna=True) - its default - drops rows whose key
-            # holds NaN, so a malformed row with an empty subject_id never
-            # clustered with anything.  A dict would instead collect all such
-            # rows into one bucket and union them into a single locus.
-            if chrom != chrom or strand != strand:
+            # holds a missing value, so a malformed row with an empty
+            # subject_id never clustered with anything.  A dict would instead
+            # collect all such rows into one bucket and union them into a
+            # single locus.  pd.isna, not `x != x`: an object column carries
+            # None, for which `x != x` is False, and pd.NA, for which it is
+            # neither True nor False and raises when used as a condition.
+            if pd.isna(chrom) or pd.isna(strand):
                 continue
             buckets.setdefault((chrom, strand), []).append(i)
 

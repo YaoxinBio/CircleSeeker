@@ -574,39 +574,3 @@ class TestMissingRegionColumnRaises:
             fmt.generate_summary_table(unified, regions)
 
 
-class TestFormatOutputValidatesBeforeWriting:
-    """The caller-side validation is what guards the output now.
-
-    generate_fasta_files trusts validated=True, so if format_output ever
-    stopped validating, nothing would catch a bad Cecc sequence - and no test
-    covered that side.
-    """
-
-    def test_invalid_cecc_aborts_before_any_file_is_written(self, tmp_path):
-        import circleseeker.modules.ecc_output_formatter as fmt
-
-        summary = pd.DataFrame(
-            {
-                "eccDNA_id": ["C1"],
-                "type": ["Cecc"],
-                "state": ["Confirmed"],
-                "location": ["chr1:1-10(+);chr2:1-10(+)"],
-                "length": [40],          # disagrees with the sequence below
-                "segment_count": [2],
-            }
-        )
-        regions = pd.DataFrame(
-            {
-                "eccDNA_id": ["C1", "C1"],
-                "chr": ["chr1", "chr2"],
-                "start": [1, 1],
-                "end": [10, 10],
-                "strand": ["+", "+"],
-                "region_idx": [0, 1],
-                "role": ["segment", "segment"],
-            }
-        )
-        with pytest.raises(ValueError):
-            fmt.validate_confirmed_cecc_sequences({"C1": "ACGT"}, summary)
-
-        assert list(tmp_path.iterdir()) == []

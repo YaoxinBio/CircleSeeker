@@ -32,7 +32,9 @@ requirements:
     - biopython >=1.81
     - pysam >=0.22
     - pyyaml >=6.0
-    - networkx >=3.0
+    # >=3.2: cycle_basis chose its root from a set of strings before then,
+    # making the written result depend on PYTHONHASHSEED
+    - networkx >=3.2
     - packaging >=23
     - intervaltree >=3.1
     # Built-in SplitReads-Core dependencies
