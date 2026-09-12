@@ -45,6 +45,24 @@ EXPECTED_CHANGES: dict[str, str] = {
 }
 
 
+def _git(root, *items, text: bool = False):
+    """Run git, avoiding macOS' /usr/bin/git shim where it cannot work.
+
+    That shim resolves the real binary through xcrun, and xcrun cannot load its
+    library across architectures - so an x86_64 interpreter under Rosetta fails
+    to launch an arm64 git through it. Try real binaries first.
+    """
+    for exe in ("/opt/homebrew/bin/git",
+                "/Library/Developer/CommandLineTools/usr/bin/git",
+                "git"):
+        try:
+            return subprocess.check_output([exe, "-C", str(root), *items],
+                                           stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    raise SystemExit("git " + " ".join(items) + " failed with every candidate binary")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
@@ -58,7 +76,7 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
 
     def git(*items: str) -> str:
-        return subprocess.check_output(["git", "-C", str(root), *items], text=True).strip()
+        return _git(root, *items).decode().strip()
 
     if args.output and git("status", "--porcelain", "--untracked-files=normal"):
         raise SystemExit("Commit release inputs before writing source provenance")
@@ -97,9 +115,7 @@ def main() -> None:
         hashes[name] = hashlib.sha256(current).hexdigest()
         if name == "src/circleseeker/__version__.py":
             continue
-        reference = subprocess.check_output(
-            ["git", "-C", str(root), "show", f"{ANALYSIS_BASELINE}:{name}"]
-        )
+        reference = _git(root, "show", f"{ANALYSIS_BASELINE}:{name}")
         if current != reference:
             changed.add(name)
     if args.update_manifest:
