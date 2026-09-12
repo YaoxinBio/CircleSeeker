@@ -7,7 +7,7 @@ Python packaging metadata remains the source of the runtime dependencies.
 For Bioconda, generate a recipe from the final source distribution:
 
 ```bash
-python scripts/make_bioconda_recipe.py dist/circleseeker-1.6.0.tar.gz /tmp/circleseeker-meta.yaml
+python scripts/make_bioconda_recipe.py dist/circleseeker-1.6.1.tar.gz /tmp/circleseeker-meta.yaml
 ```
 
 The generated recipe pins the release sdist URL and its actual SHA256. Submit it

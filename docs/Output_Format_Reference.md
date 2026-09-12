@@ -138,7 +138,7 @@ FASTA header 格式：
 
 #### `*_CeccJunctions.bedpe`
 
-1.6.0 中，N 个片段输出 N 条有向连接，包含末段到首段的闭环连接；端点使用按链方向确定的入口/出口，表示为单碱基、零基半开区间。LAST 不提供 MAPQ，因此对应 MAPQ、低 MAPQ 标记和置信度字段保留缺失；identity 根据实际比对列计算。逐读段 RCA 支持量与分子总量分别记录。
+1.6.1 中，N 个片段输出 N 条有向连接，包含末段到首段的闭环连接；端点使用按链方向确定的入口/出口，表示为单碱基、零基半开区间。LAST 不提供 MAPQ，因此对应 MAPQ、低 MAPQ 标记和置信度字段保留缺失；identity 根据实际比对列计算。逐读段 RCA 支持量与分子总量分别记录。
 
 列顺序：`chrom1, start1, end1, chrom2, start2, end2, name, score, strand1, strand2`
 

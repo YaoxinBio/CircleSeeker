@@ -4,16 +4,16 @@
 
 # CircleSeeker
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
+[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
 [![CI](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml/badge.svg)](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20or%20commercial-green.svg)](LICENSE)
 
 Comprehensive detection and characterization of extrachromosomal circular DNA (eccDNA) from PacBio HiFi sequencing data.
 
-> **1.6.0 release preparation:** distribution files and validation are being prepared.
+> **1.6.1 release preparation:** distribution files and validation are being prepared.
 > The GitHub release remains a draft until the complete dataset rebuild is accepted.
-> See [release notes](docs/releases/v1.6.0.md) for changes and validation scope.
+> See [release notes](docs/releases/v1.6.1.md) for changes and validation scope.
 > This preparation matches repaired computation commit `44c79b8`. The earlier
 > `5b6a79f` GitHub draft and its assets are obsolete and await replacement.
 
@@ -32,8 +32,8 @@ CircleSeeker identifies and classifies eccDNA into three categories:
 ### Quick Install (Recommended)
 
 ```bash
-# After v1.6.0 is published, clone the exact release
-git clone --branch v1.6.0 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
+# After v1.6.1 is published, clone the exact release
+git clone --branch v1.6.1 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
 cd CircleSeeker
 
 # Create and activate environment
@@ -49,7 +49,7 @@ circleseeker --version
 
 Before the final tag is published, use a specific commit from the preparation
 branch for evaluation. The generic Bioconda installation may still select an older
-release; only use `circleseeker=1.6.0` there after the updated recipe is merged
+release; only use `circleseeker=1.6.1` there after the updated recipe is merged
 and its package is available.
 
 ### Manual Installation

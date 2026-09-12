@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "Please cite the exact CircleSeeker version used in your research."
 type: software
 title: CircleSeeker
-version: 1.6.0
+version: 1.6.1
 authors:
   - family-names: Zhang
     given-names: Yaoxin
