@@ -7,7 +7,7 @@
 [![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
 [![CI](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml/badge.svg)](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0%20or%20commercial-green.svg)](LICENSE)
 
 Comprehensive detection and characterization of extrachromosomal circular DNA (eccDNA) from PacBio HiFi sequencing data.
 

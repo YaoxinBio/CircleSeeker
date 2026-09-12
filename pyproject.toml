@@ -14,7 +14,7 @@ authors = [
 maintainers = [
     {name = "Yaoxin Zhang", email = "yxzhang@ncgr.ac.cn"}
 ]
-license = "GPL-3.0-only"
+license = "GPL-3.0-only OR LicenseRef-Commercial"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
