@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Fixed two pandas 3 compatibility issues. Merging overlapping Confirmed and Inferred calls now preserves fractional copy numbers. UeccDNA clustering retains records with missing coordinates and uses their historical location signatures.
+## [1.6.2] - 2026-11-21
+
+Bug-fix release. Command-line usage and output table structure are unchanged.
+
+### Fixed
+
+- **pandas 3 compatibility.** Merging overlapping Confirmed and Inferred calls
+  no longer fails when a fractional copy number (for example `21.5`) is written
+  into an integer column; all-integer results are still written as integers.
+- **UeccDNA clustering with missing coordinates.** Under pandas 3,
+  `astype(str)` keeps missing values, which dropped records with a missing
+  start coordinate from grouping. These records are retained again and grouped
+  by their historical location signatures.
+
+### Documentation
+
+- Output references (English and Chinese) now describe the files written by
+  Step 16, the final table columns and ID format, MeccDNA as one sequence with
+  several candidate source loci, and the Inferred `confidence=0.95` value as a
+  fixed placeholder rather than a calibrated probability.
+- Replaced the removed `--generate-config` option with `circleseeker
+  init-config`, and aligned documented defaults and configuration precedence
+  with the implementation.
+
+### CI
+
+- The Python 3.9 job runs on Ubuntu 24.04 because `ubuntu-latest` no longer
+  provides Python 3.9.
+- Documentation checks now cover public commands, key defaults and output CSV
+  headers.
+- The release workflow derives artifact names from the source version.
 
 ## [1.6.1] - 2026-09-12
 

@@ -4,14 +4,14 @@
 
 # CircleSeeker
 
-[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
+[![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](https://github.com/YaoxinBio/CircleSeeker)
 [![CI](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml/badge.svg)](https://github.com/YaoxinBio/CircleSeeker/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20or%20commercial-green.svg)](LICENSE)
 
 CircleSeeker reconstructs and classifies extrachromosomal circular DNA (eccDNA) from PacBio HiFi reads. It is the analysis software developed for Multi-Modal Circle-seq (MMC-seq). [Published study and software citation](#citation)
 
-> [CircleSeeker v1.6.1](https://github.com/YaoxinBio/CircleSeeker/releases/tag/v1.6.1) was released on 2026-09-12 at commit `245048e2`. See the [release notes](docs/releases/v1.6.1.md) for the validation history.
+> The current release is [CircleSeeker v1.6.2](https://github.com/YaoxinBio/CircleSeeker/releases/tag/v1.6.2) (2026-11-21), a bug-fix release for pandas 3 compatibility. See the [changelog](CHANGELOG.md) for details.
 
 ## eccDNA Classification
 
@@ -29,7 +29,7 @@ CircleSeeker identifies and classifies eccDNA into three categories:
 
 ```bash
 # Clone the tagged release
-git clone --branch v1.6.1 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
+git clone --branch v1.6.2 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
 cd CircleSeeker
 
 # Create and activate environment
