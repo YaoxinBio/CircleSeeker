@@ -4,7 +4,7 @@ type: software
 title: CircleSeeker
 version: 1.6.2
 date-released: "2026-11-21"
-doi: "10.5281/zenodo.22718007"
+doi: "10.5281/zenodo.24410294"
 authors:
   - family-names: Zhang
     given-names: Yaoxin
