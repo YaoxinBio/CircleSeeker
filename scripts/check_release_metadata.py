@@ -12,6 +12,9 @@ Asserting identity would now be asserting something false, so the check states
 the truth instead: the files that differ from the baseline must be exactly the
 ones declared here. An unintended change still fails the gate; the intended ones
 are named, and the written record says the source is not identical.
+
+The published v1.6.1 tag preserves its original eleven-file manifest. The
+working branch also pins reviewed post-release changes.
 """
 import argparse
 import ast
@@ -31,16 +34,19 @@ REPOSITORY = "https://github.com/YaoxinBio/CircleSeeker"
 # what the gate actually compares. Regenerate deliberately with
 # --update-manifest after reviewing a change, and commit the result.
 EXPECTED_CHANGES: dict[str, str] = {
+    "src/circleseeker/cli/main.py": "ba5c4caec613806a66d44b9f922f454b9d020f70230b48f7c1f2592c06b96f68",
+    "src/circleseeker/config.py": "0be5ae4ce5a49353278d04eaf6e824d6d914d7e7f0a76bf01eb88c87ff4c09b8",
     "src/circleseeker/core/pipeline.py": "b32044ee8cceceeeed9eed665f4aead172e0857b2f5368996a32dacf85045699",
+    "src/circleseeker/core/steps/inference.py": "0b491c6c1c82d3340b38d9e5af6b8edc244713aeead4479c15dcf947dbbe0e1e",
     "src/circleseeker/modules/cecc_build.py": "7b673a3fe555b6edbc7ad141921feabf7eb3f6e9b0608e6974ea5b620f2b15f6",
-    "src/circleseeker/modules/ecc_output_formatter.py": "c07cd8fd61935dc2c244e71a6b404bbe2fa01856d93f0b15f4ad33120c02a208",
+    "src/circleseeker/modules/ecc_output_formatter.py": "633177f9dc9b50c15862b4136939942c46e8e8c5d96cfc1d32a322edac16aae2",
     "src/circleseeker/modules/ecc_packager.py": "f3642ff047aabd8015403cf590fc075df7ff42d0402f3b1529ed3a0a6b0e5169",
     "src/circleseeker/modules/ecc_summary.py": "56c594bd9c3e1d0a245a35feab587f9afc30eaf3b1817b4ebf29acd105c8cd83",
-    "src/circleseeker/modules/ecc_unify.py": "57b5858d73adb8ce61e16f0f2b1fa053a4fef23b05c04a30f83390105ea3e530",
+    "src/circleseeker/modules/ecc_unify.py": "fca541b92814a507e9579b5eb6bbaaa11223acc48cc466427aa6d35f866b71d7",
     "src/circleseeker/modules/splitreads_core.py": "8a0cdbfdd5ba7aad9da7bf772ad89ce38d23a942a3e459aabad940ba936896fa",
     "src/circleseeker/modules/tandem_to_ring.py": "221bedeb1ead909c87c738763dbfe79359d0d115c5e03067a093e6795f2b6391",
     "src/circleseeker/modules/um_classify.py": "5d5576f2dd1da96e4c58284f3d07147ef0c14e2c5493c1483fe24b89b3d3743c",
-    "src/circleseeker/modules/umc_process.py": "72d448cc0a249e2b4921a9f03e8df86ae3d113a46b625d874a22e0414d2743c4",
+    "src/circleseeker/modules/umc_process.py": "896387f5b27b14f44132d58051dc57c92a45ce1d37048b8b839846fc0a055930",
     "src/circleseeker/utils/read_support.py": "25296f2276b12688af582c7762ad2a4a685f4228ed10b9091d61202d84418669",
 }
 

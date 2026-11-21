@@ -1,6 +1,6 @@
 # CircleSeeker 配置参考手册
 
-本手册完整列出 CircleSeeker v1.1.0 所有配置选项，包括默认值、取值范围及使用说明。
+本手册列出常用配置、默认值及取值范围，可搭配本机安装版本生成的默认 YAML 使用。
 
 ---
 
@@ -15,10 +15,10 @@ circleseeker -i reads.fasta -r reference.fa -c config.yaml
 生成默认配置模板：
 
 ```bash
-circleseeker --debug --generate-config > config.yaml
+circleseeker init-config --output-file config.yaml
 ```
 
-> 提示：CLI 的 `--preset`（需 `--debug`）会在读取配置后、CLI 覆写前应用，用于快速切换灵敏度参数集。
+普通模式即可使用 `--preset`。管线先读取 YAML，再应用灵敏度预设，最后应用显式命令行参数。
 
 ---
 
@@ -146,7 +146,7 @@ circleseeker --debug --generate-config > config.yaml
 
 ### 4.4 CeccDNA 构建器 (`tools.cecc_build`)
 
-CeccBuild 以 LAST 为主进行检测，缺失 LAST 或关键输入时回退到图方法。
+CeccBuild 使用 LAST 比对候选序列。管线优先使用 `tau_gap`，其次才取 `edge_tolerance`。同样，`theta_chain` 优先于 `min_match_degree`，默认 `0.95` 对应 95.0% 的匹配阈值。
 
 | 参数 | 类型 | 默认值 | 取值范围 | 说明 |
 |------|------|--------|----------|------|
@@ -180,7 +180,7 @@ CeccBuild 以 LAST 为主进行检测，缺失 LAST 或关键输入时回退到�
 
 ### 4.6 Minimap2 候选比对 (`tools.minimap2_align`)
 
-用于候选片段比对到参考基因组的 minimap2 配置。
+第 4 步将候选片段比对到参考基因组。`tools.alignment.min_identity` 有值时会覆盖本节的 `min_identity`，默认值 `99.0` 也会生效。要调整基础阈值，请设置 `tools.alignment.min_identity`。长度补偿和下限仍取自 `tools.minimap2_align`。
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -221,7 +221,7 @@ tools:
 
 ### 4.9 SplitReads-Caller（`tools.splitreads`）
 
-内置的 split-read/图论推断模块，针对 HiFi 数据优化。需要 `mappy` Python 包。
+内置的 split-read/图论推断模块，针对 HiFi 数据优化。比对阶段调用外部 `minimap2` 可执行程序。
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|

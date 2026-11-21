@@ -1,6 +1,6 @@
-# CircleSeeker CLI Reference (v1.1.0)
+# CircleSeeker CLI Reference
 
-This document describes the CircleSeeker 1.1.0 command-line interface for English-speaking users.
+The installed command is `circleseeker`.
 
 ---
 
@@ -24,6 +24,7 @@ Common optional flags:
 - `--keep-tmp` Retain the temporary `.tmp_work` directory (default: remove); overrides `keep_tmp` in config
 - `--turbo` Enable turbo mode (RAM-backed temp directory for faster I/O)
 - `--preset CHOICE` Sensitivity preset (`relaxed` / `balanced` / `strict`)
+- `--fast-align` Use the faster LAST alignment settings for CeccDNA detection
 - `--show-steps` List all 5 phases (16 steps) without executing them
 - `--dry-run` Show planned operations without running
 
@@ -70,7 +71,7 @@ circleseeker validate
 
 ## 5. Execution Lifecycle
 
-1. **Dependency check** At startup, CircleSeeker verifies that all required external tools (minimap2, samtools, cd-hit-est, lastal) are available. SplitReads-Core is built-in and requires only the `mappy` Python package. If dependencies are missing, clear error messages with installation hints are shown.
+1. **Dependency check** At startup, CircleSeeker verifies that all required external tools (minimap2, samtools, cd-hit-est, lastal) are available. The built-in SplitReads-Core calls the `minimap2` executable for alignment. If dependencies are missing, clear error messages with installation hints are shown.
 2. **Temporary workspace** Intermediates live under `<output>/.tmp_work/` (configurable via `runtime.tmp_dir`, supports relative or absolute paths). Use `--keep-tmp` to retain them.
 3. **Config & checkpoints** During execution, `config.yaml` and `<prefix>.checkpoint` are saved in the output directory; they are automatically cleaned up on successful completion. Use `--keep-tmp` to preserve them for debugging or resuming interrupted runs.
 4. **Auto indexing** Missing `.mmi` or `.fai` triggers `minimap2 -d` and `samtools faidx` automatically.
@@ -98,7 +99,7 @@ CircleSeeker organizes 16 internal steps into 5 display phases, centered on two 
 | | 3 | `tandem_to_ring` | Convert repeats to circular candidates |
 | **CtcReads-Caller** | 4 | `run_alignment` | Align candidates back to the reference (minimap2) |
 | | 5 | `um_classify` | Coverage + locus-based U/Mecc classification |
-| | 6 | `cecc_build` | LAST-first complex eccDNA detection (graph fallback) |
+| | 6 | `cecc_build` | Detect chimeric eccDNA using LAST |
 | | 7 | `umc_process` | Consolidate U/M/C outputs |
 | | 8 | `cd_hit` | Remove redundant sequences |
 | | 9 | `ecc_dedup` | Harmonize coordinates |
@@ -114,19 +115,7 @@ CircleSeeker organizes 16 internal steps into 5 display phases, centered on two 
 
 ## 8. Output Layout
 
-```
-<output>/
-├── <prefix>_merged_output.csv
-├── <prefix>_summary.txt
-├── <prefix>_report.html
-├── <prefix>_Confirmed_UeccDNA/
-├── <prefix>_Confirmed_MeccDNA/
-├── <prefix>_Confirmed_CeccDNA/
-├── <prefix>_Inferred_eccDNA/
-└── logs/ (if additional logging enabled)
-```
-
-Subdirectories follow the naming described in the README "Output Files" section.
+With `-o results -p sample`, open `results/sample_eccDNA_summary.csv` for the list of calls. The same directory contains `sample_eccDNA_regions.csv`, `sample_eccDNA_reads.csv`, `sample_eccDNA_all.fasta`, per-type directories and reports. See the [output format reference](Output_Format_Reference_en.md).
 
 ---
 

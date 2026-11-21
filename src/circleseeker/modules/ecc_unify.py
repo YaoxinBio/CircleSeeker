@@ -854,7 +854,7 @@ def prepare_inferred_simple(df: pd.DataFrame, redundant_ids: Collection[str]) ->
     # num_split_reads: number of split-read evidence supporting this eccDNA
     reads_count = filtered.get("num_split_reads", pd.Series([1] * len(filtered)))
 
-    # prob_present: probability that eccDNA is present (0-1 scale)
+    # The built-in SplitReads adapter supplies a fixed compatibility score here.
     confidence = filtered.get("prob_present", pd.Series([pd.NA] * len(filtered)))
 
     # copy_number: raw coverage depth from SplitReads-Core (proxy for copy number)
@@ -1455,14 +1455,8 @@ def _augment_confirmed_from_overlap(
     if "inferred_reads" not in confirmed_df.columns:
         confirmed_df["inferred_reads"] = 0
 
-    # Apply augmentation to confirmed_df.  The mask below selects exactly the
-    # rows `confirmed_df["eccDNA_id"] == conf_id` selected, but is built from a
-    # single grouping pass: that comparison costs 92.9 ms on the 1,148,834-row
-    # GlioSarc_P01_Tumor table and ran once per augmented id.
+    # Index rows once so each augmented ID can be updated by position.
     confirmed_positions = confirmed_df.groupby("eccDNA_id", sort=False).indices
-    # Positional writes reach exactly the rows the boolean mask selected -
-    # .loc converts a mask to these same positions internally, including the
-    # dtype promotion - without allocating a full-table array per id.
     cn_col = confirmed_df.columns.get_loc("copy_number") if "copy_number" in confirmed_df.columns else None
     rc_col = confirmed_df.columns.get_loc("reads_count") if "reads_count" in confirmed_df.columns else None
     ir_col = confirmed_df.columns.get_loc("inferred_reads")
@@ -1472,9 +1466,14 @@ def _augment_confirmed_from_overlap(
             continue
         if cn_col is not None:
             old_cn = confirmed_df.iat[positions[0], cn_col]
-            confirmed_df.iloc[positions, cn_col] = (
-                (float(old_cn) if pd.notna(old_cn) else 0.0) + add_cn
-            )
+            total_cn = (float(old_cn) if pd.notna(old_cn) else 0.0) + add_cn
+            # pandas 3 requires an explicit promotion for fractional support.
+            # Keep integer-only totals in their original CSV representation.
+            if not total_cn.is_integer() and pd.api.types.is_integer_dtype(
+                confirmed_df["copy_number"]
+            ):
+                confirmed_df["copy_number"] = confirmed_df["copy_number"].astype("float64")
+            confirmed_df.iloc[positions, cn_col] = total_cn
         if rc_col is not None:
             old_rc = confirmed_df.iat[positions[0], rc_col]
             confirmed_df.iloc[positions, rc_col] = (

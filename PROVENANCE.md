@@ -10,11 +10,14 @@ and their tags are preserved here; this repository continues that version
 sequence and does not redefine those versions. Releases published to Bioconda
 under those version numbers were built from those same tags.
 
-v1.5.0 is the version benchmarked in the accompanying manuscript. v1.6.1 is the
-first release made from this repository; it corrects two defects that made
-deliverables vary between runs of identical code on identical input, so results
-produced with v1.6.1 are reproducible where results from earlier versions were
-not. See CHANGELOG.md.
+Zhang et al. report using **CircleSeeker v1.6.1** for the primary libraries and
+all 27 benchmark runs in the published MMC-seq study. The evaluator and result
+tables are archived separately as **CircleSeeker-benchmark v1.1.0**.
+[Published methods and code availability](https://www.nature.com/articles/s41467-026-79221-1_reference.pdf) · [Benchmark release](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0)
+
+CircleSeeker v1.6.1 corrected two sources of run-to-run variation in the
+deliverables. The paper cites the software
+archive under DOI `10.5281/zenodo.22718199`. [Software archive](https://doi.org/10.5281/zenodo.22718199) · [Changelog](CHANGELOG.md)
 
 ## Version correspondence
 
@@ -24,16 +27,15 @@ not. See CHANGELOG.md.
 | `055110f531a9e08936f8c526da5c71950a6bbcee` | Rejected preliminary repair; its dataset batch and prior release draft are obsolete |
 | `1.5.1+ceccfix.20260908` / `44c79b8eafdb1f60f949d69c9eeab12a69ce570b` | Frozen repair used for 59 completed runs and the first eight GS steps |
 | `1.5.1+ceccfix.20260908` / `a662ad74e1cf984af0417017a36572e3a725c934` | Performance-only support aggregation change; GS resumes at step 9 from its completed CD-HIT checkpoint |
-| v1.6.1 / `e68fd7b30f70cf02af34c88a6120f133b7f01a1c` | Release source. Differs from `a662ad7` in eleven files: the reproducibility fixes and the scale work that let GlioSarc_P01_Tumor finish. Verified against an unoptimised baseline - seven deliverables byte-identical - and reproducible across runs. `scripts/check_release_metadata.py` names the eleven files and records that the source is **not** identical to the analysis baseline |
+| `e68fd7b30f70cf02af34c88a6120f133b7f01a1c` | Earlier release preparation. The source at this commit identifies itself as 1.6.0. |
+| v1.6.1 / `245048e2e64245430da7f6f63e45de067b272b18` | Published release, 2026-09-12. Compared with `a662ad7`, eleven implementation files changed. Their reviewed digests are pinned in the [tagged release check](https://github.com/YaoxinBio/CircleSeeker/blob/v1.6.1/scripts/check_release_metadata.py). |
 
 The release comparison excludes only `src/circleseeker/__version__.py` when
 checking algorithm-source equality. Rebuilding with the repair commit is not
 retroactively recorded as running an already-published v1.6.1.
 The preliminary and current repairs shared an internal version string, so that
 string alone cannot identify an analysis. Use the full Git commit and recorded
-source checksums. Existing GitHub draft assets target `5b6a79f` and contain the
-rejected `055110f` implementation until explicitly replaced; they are not the
-artifacts built from this repaired preparation branch.
+source checksums. The superseded draft at `5b6a79f` used the rejected `055110f` implementation. Use the [published v1.6.1 release](https://github.com/YaoxinBio/CircleSeeker/releases/tag/v1.6.1) for the final source and comparison scope.
 
 All 194 commits reachable from the captured historical branches, tags and four
 pull-request heads were preserved locally. The three repair commits bring that
@@ -59,5 +61,4 @@ release or the dataset rebuild.
 Record the exact software commit, reference data, configuration, input checksums
 and dependency versions for each analysis. The installation environment in this
 repository does not claim to recreate historical environments. See the
-[release notes](docs/releases/v1.6.1.md) for the completed checks and outstanding
-dataset acceptance. A final version DOI is added only after archival succeeds.
+[release notes](docs/releases/v1.6.1.md) for the published comparison and the separately dated candidate checks.

@@ -187,7 +187,7 @@ def cli(
 ) -> None:
     """CircleSeeker: Comprehensive eccDNA detection from HiFi sequencing data.
 
-    Run directly as: CircleSeeker -i <reads.fa> -r <ref.fa> [options]
+    Run directly as: circleseeker -i <reads.fa> -r <ref.fa> [options]
     """
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug

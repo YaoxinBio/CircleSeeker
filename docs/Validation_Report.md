@@ -1,4 +1,4 @@
-> Historical validation report for the version recorded below. These metrics are not validation results for v1.6.1; see [current release notes](releases/v1.6.1.md).
+> This report records the January 2026 tests of CircleSeeker v1.1.0. The published MMC-seq benchmark used CircleSeeker v1.6.1. [Published benchmark results](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0) · [Software release notes](releases/v1.6.1.md)
 
 # CircleSeeker Batch Validation Report
 

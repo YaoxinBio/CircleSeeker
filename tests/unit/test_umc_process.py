@@ -1177,6 +1177,18 @@ class TestLocationClusteringPrecomputesAggregates:
         result = self._processor().cluster_by_location(frame.copy())
         assert result["location_signature"].iloc[0] == expected
 
+    def test_missing_nullable_coordinates_keep_their_group(self):
+        frame = pd.DataFrame({
+            "query_id": ["a", "b", "c"],
+            "chr": ["chr1", "chr1", "chr1"],
+            "start0": pd.array([pd.NA, 100, pd.NA], dtype="Int64"),
+            "end0": [200, 200, 200],
+        })
+        result = self._processor().cluster_by_location(frame).set_index("location_signature")
+
+        assert result.loc["chr1:<NA>-200", "cluster_members"] == "a;c"
+        assert result.loc["chr1:100-200", "cluster_members"] == "b"
+
 
 class TestClusterRepresentativeIsADict:
     """Adding cluster metadata must not rebuild a Series per cluster.

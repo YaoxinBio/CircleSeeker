@@ -1,66 +1,72 @@
 # CircleSeeker 输出格式参考手册
 
-本手册定义 CircleSeeker v1.1.0 的主要输出文件结构与字段说明。
+第 16 步直接把结果写入 `-o` 指定的目录。`<prefix>` 是用 `-p` 指定的样本前缀。
 
----
-
-## 输出目录结构
-
-`ecc_packager` 打包后的标准目录结构如下：
-
-```
+```text
 <output>/
-└── <prefix>/
-    ├── <prefix>_Confirmed_UeccDNA/
-    │   ├── <prefix>_UeccDNA_C.fasta
-    │   ├── <prefix>_UeccDNA.bed
-    │   └── <prefix>_UeccDNA.core.csv
-    ├── <prefix>_Confirmed_MeccDNA/
-    │   ├── <prefix>_MeccDNA_C.fasta
-    │   ├── <prefix>_MeccSites.bed
-    │   ├── <prefix>_MeccBestSite.bed
-    │   └── <prefix>_MeccSites.core.csv
-    ├── <prefix>_Confirmed_CeccDNA/
-    │   ├── <prefix>_CeccDNA_C.fasta
-    │   ├── <prefix>_CeccSegments.bed
-    │   ├── <prefix>_CeccJunctions.bedpe
-    │   └── <prefix>_CeccSegments.core.csv
-    ├── <prefix>_Inferred_eccDNA/
-    │   ├── <prefix>_UeccDNA_I.csv
-    │   ├── <prefix>_UeccDNA_I.fasta
-    │   ├── <prefix>_chimeric.csv
-    │   └── <prefix>_CeccDNA_I.fasta
-    ├── <prefix>_merged_output.csv
-    ├── <prefix>_report.html
-    └── <prefix>_summary.txt
+├── <prefix>_eccDNA_summary.csv
+├── <prefix>_eccDNA_regions.csv
+├── <prefix>_eccDNA_reads.csv
+├── <prefix>_eccDNA_all.fasta
+├── UeccDNA/   (<prefix>_uecc.bed, <prefix>_uecc.fasta)
+├── MeccDNA/   (<prefix>_mecc_sites.bed, <prefix>_mecc.fasta)
+├── CeccDNA/   (<prefix>_cecc_segments.bed, <prefix>_cecc_junctions.bedpe, <prefix>_cecc.fasta)
+├── <prefix>_report.html
+└── <prefix>_summary.txt
 ```
 
-> 说明：`<prefix>_UeccDNA_I.csv` 在打包阶段由 `<prefix>_simple.csv` 重命名而来。
+打包时会创建三个类型目录。有相应区域时才写 BED/BEDPE，有序列时才写各类型的 FASTA。HTML 和文本报告由前一步生成，打包时复制到输出目录。
 
----
+## 最终 CSV
 
-## 1. 合并输出（`*_merged_output.csv`）
+`<prefix>_eccDNA_summary.csv` 中每条 eccDNA 占一行，表头如下。
 
-包含所有 Confirmed + Inferred 的最终汇总表。
+```csv
+eccDNA_id,type,state,chr,start,end,strand,length,location,segment_count,read_count,copy_number,confidence,inferred_reads
+```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `eccDNA_id` | string | 最终编号（UeccDNA1/MeccDNA1/CeccDNA1） |
-| `original_id` | string | 合并/重编号前的原始 ID |
-| `Regions` | string | 基因组坐标（CeccDNA 为多段，用 `;` 分隔） |
-| `Strand` | string | 链方向（CeccDNA 多段用 `;` 分隔） |
-| `Length` | int | eccDNA 长度（bp） |
-| `eccDNA_type` | string | `UeccDNA` / `MeccDNA` / `CeccDNA` |
-| `State` | string | `Confirmed` / `Inferred` |
-| `Seg_total` | int | 片段数（U/M 为 1） |
-| `Hit_count` | int | 支持的 reads 数量 |
-| `reads_count` | int | 支持的 reads 数量（同 Hit_count） |
-| `confidence_score` | float | 检测置信度（0-1，Inferred 来自 prob_present） |
-| `copy_number` | float | 估计拷贝数（Confirmed 来自重复数，Inferred 来自覆盖度） |
+| 字段 | 含义 |
+| --- | --- |
+| `eccDNA_id`、`type`、`state` | 每种类型从 1 独立编号，至少四位，如 `UeccDNA0001`。`type` 取 `Uecc`、`Mecc` 或 `Cecc`，`state` 取 `Confirmed` 或 `Inferred`。同一次运行的结果表可用 `eccDNA_id` 关联。 |
+| `chr`、`start`、`end`、`strand` | 坐标采用零基半开区间。Uecc 对应单一来源，Mecc 显示代表性候选位点。Cecc 的 `chr` 为 `multi`，其余三列为 `.`。 |
+| `length`、`location`、`segment_count` | `length` 单位为 bp。Uecc 对应一个位点。Mecc 是一条环序列，`\|` 分隔它的多个候选来源位点，`segment_count` 为 1。Cecc 由多个片段组成，`;` 按环上顺序分隔组成片段，`segment_count` 计片段数。 |
+| `read_count`、`inferred_reads` | `read_count` 计支持读段总数。合并重叠结果时，Confirmed 记录可以获得额外的 split-read 支持，`inferred_reads` 记录追加的数量。独立 Inferred 记录的 split-read 支持数看 `read_count`。 |
+| `copy_number` | Confirmed 记录使用重复拷贝估计，合并时可计入重叠 Inferred 记录的估计值。独立 Inferred 记录使用取整后的覆盖深度作为代理值，缺失或非正数时取 1。 |
+| `confidence` | Confirmed 有上游评分时沿用该值。内置 SplitReads-Core 适配器使用固定兼容值 `prob_present=0.95` 和 `prob_artifact=0.0`，Inferred 的 `confidence` 继承 `prob_present`。0.95 不能用来判断单条候选的存在概率或给候选排序。 |
 
----
+`<prefix>_eccDNA_regions.csv` 每行对应一个位点或片段。
 
-## 2. Confirmed 输出
+```csv
+eccDNA_id,region_idx,chr,start,end,strand,length,role
+```
+
+`region_idx` 从 1 开始。Uecc 的 `role` 为 `source`。Mecc 的 `primary` 是代表性位点，`candidate` 是其他候选位点，真实来源仍有多种可能。Cecc 使用 `head`、`middle`、`tail` 表示各片段在环上的顺序。
+
+`<prefix>_eccDNA_reads.csv` 每行对应 Confirmed 分支中一个去重后的 `(eccDNA_id, read_name)`。表头如下。
+
+```csv
+eccDNA_id,read_name,copy_number,eccDNA_copy_number,match_degree,identity,mapq
+```
+
+两个拷贝数字段分别对应读段和 Confirmed eccDNA，逐读段估计缺失时可以为空。整合时追加的 split-read 支持计入主表，逐读段明细行数因此可能小于主表的 `read_count`。没有具名 Confirmed 读段时，明细 CSV 可能为空且没有表头。
+
+## 最终 BED、BEDPE 和 FASTA
+
+BED 含六列，用制表符分隔，无表头，顺序为 `chrom, start, end, name, score, strand`。`score` 固定为 1。Uecc 的 `name` 是 ID，Mecc 使用 `ID|role`，Cecc 使用 `ID|segI/N|role`。Cecc 的 BEDPE 列为 `chrom1, start1, end1, chrom2, start2, end2, name, score, strand1, strand2`。每行用单碱基区间连接上一片段的出口与下一片段的入口，保留链方向，并包含末段到首段的闭环连接。
+
+总 FASTA 与各类型 FASTA 的表头均为 `>ID|location|length=N|state=STATE`。Mecc 的 `location` 本身可以含多个 `|`。解析时从第一个 `|` 左边取 ID，从右边取最后两个字段，也可以直接用 ID 查询区域表。
+
+```text
+>MeccDNA0001|chr1:100-200(+)|chr2:300-400(-)|length=100|state=Confirmed
+```
+
+## 中间文件与回退输出
+
+下面列出各证据分支的中间文件。使用 `--keep-tmp` 可保留中间结果。缺少统一 CSV 时，第 16 步可以把已有文件复制到 `<prefix>_Confirmed_UeccDNA/`、`<prefix>_Confirmed_MeccDNA/`、`<prefix>_Confirmed_CeccDNA/` 和 `<prefix>_Inferred_eccDNA/`。此时 `<prefix>_merged_output.csv` 来自已有的 **Confirmed** 汇总表。
+
+中间表的 `reads_count` 计支持读段数。Confirmed Mecc 的 `Hit_count` 计候选位点数，Confirmed Uecc/Cecc 的 `Hit_count` 默认为 1。Inferred Uecc/Cecc 的两个字段均取 split-read 支持数。
+
+## 2. Confirmed 中间文件
 
 ### 2.1 UeccDNA
 
@@ -151,17 +157,19 @@ FASTA header 格式：
 
 ---
 
-## 3. Inferred 输出
+## 3. Inferred 中间文件
 
-### 3.1 `*_UeccDNA_I.csv`
+### 3.1 `*_simple.csv`
+
+备用打包路径将此文件重命名为 `*_UeccDNA_I.csv`。
 
 字段：
-`eccDNA_id, chr, start0, end0, strand, length, eccdna_type, state, num_split_reads, prob_present, prob_artifact, hifi_abundance`
+`eccDNA_id, chr, start0, end0, strand, length, eccdna_type, state, num_split_reads, prob_present, prob_artifact, hifi_abundance, copy_number`
 
 ### 3.2 `*_chimeric.csv`
 
 字段：
-`eccDNA_id, chr, start0, end0, strand, length, eccdna_type, state, seg_index, seg_total, junction_role, read_count, num_split_reads, prob_present, prob_artifact, hifi_abundance`
+`eccDNA_id, chr, start0, end0, strand, length, eccdna_type, state, seg_index, seg_total, junction_role, read_count, num_split_reads, prob_present, prob_artifact, hifi_abundance, copy_number`
 
 ### 3.3 FASTA
 

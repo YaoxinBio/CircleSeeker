@@ -1,4 +1,4 @@
-# SplitReads-Core 算法说明（v1.1.0）
+# SplitReads-Core 算法说明
 
 本文档详细描述 CircleSeeker 内置的 SplitReads-Core 模块，用于基于 split-read 证据推断 eccDNA。
 
@@ -12,7 +12,7 @@ SplitReads-Core 是一个基于 split-read 比对模式和断点证据的 eccDNA
 
 **主要特点**：
 - 针对 HiFi 数据优化（使用 `map-hifi` preset）
-- 无需外部依赖工具（使用 Python 的 mappy 进行比对）
+- 内置的推断模块调用外部 `minimap2` 可执行程序，并解析 PAF 比对结果。
 - 基于图算法检测成环模式
 - 支持简单型（单片段）和嵌合型（多片段）eccDNA 检测
 
@@ -234,7 +234,7 @@ num_region >= 2  →  嵌合型 (ICeccDNA)
 
 ## 7. 依赖
 
-- **mappy**: Python minimap2 绑定
+- **minimap2** 提供 Trim 阶段使用的外部比对程序。
 - **networkx**: 图算法库
 - **pybedtools**: BED 文件操作（需要系统 bedtools）
 - **intervaltree**: 区间树操作

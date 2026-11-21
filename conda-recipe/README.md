@@ -1,17 +1,19 @@
 # Conda packaging
 
-`meta.yaml` builds the current checkout locally. Run `./build_and_upload.sh`
-with conda-build already installed; the script builds and tests without uploading.
-Python packaging metadata remains the source of the runtime dependencies.
+Bioconda distributes CircleSeeker v1.6.1 as build `1.6.1-0`. The published recipe uses the GitHub tag archive and its SHA256 checksum. [Installation instructions](../README.md#install-from-bioconda) · [Bioconda package](https://bioconda.github.io/recipes/circleseeker/README.html)
 
-For Bioconda, generate a recipe from the final source distribution:
+To build and test the current checkout locally, install `conda-build` and run the following from the repository root. The script uses `conda-recipe/meta.yaml` with uploads disabled.
 
 ```bash
-python scripts/make_bioconda_recipe.py dist/circleseeker-1.6.1.tar.gz /tmp/circleseeker-meta.yaml
+bash conda-recipe/build_and_upload.sh
 ```
 
-The generated recipe pins the release sdist URL and its actual SHA256. Submit it
-to `bioconda/bioconda-recipes` only when the matching GitHub release asset is
-publicly available. Update the existing circleseeker recipe; retain old packages.
-The obsolete 0.9.8 alternate recipe has been removed from this checkout and remains
-available in Git history.
+For a release that distributes a Python source distribution (sdist), the helper below generates a recipe using its filename and checksum. With Python's `build` package installed, run these commands from the repository root.
+
+```bash
+sdist_dir=$(mktemp -d)
+python -m build --sdist --outdir "$sdist_dir"
+python scripts/make_bioconda_recipe.py "$sdist_dir"/circleseeker-*.tar.gz "$sdist_dir/bioconda-meta.yaml"
+```
+
+The generated URL points to an uploaded release asset named `circleseeker-<version>.tar.gz`. Check that the URL serves the exact file used to generate the checksum before submitting an sdist-based update to the [Bioconda recipe](https://github.com/bioconda/bioconda-recipes/blob/master/recipes/circleseeker/meta.yaml).

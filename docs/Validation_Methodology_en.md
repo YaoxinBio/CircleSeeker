@@ -1,9 +1,8 @@
 # CircleSeeker Validation Methodology
 
-**Version**: v1.1.0
-**Last Updated**: 2026-01-15
+This guide describes the minimal U/M/C classification test implemented under `tests/simulation/`. Its inputs go directly to candidate alignment.
 
-This document describes the simulation-based validation methodology used to evaluate CircleSeeker's eccDNA detection performance.
+To reproduce the platform-matched benchmark in the MMC-seq paper, use CircleSeeker v1.6.1 with the frozen simulator, evaluator and result tables in CircleSeeker-benchmark v1.1.0. [Published study](https://doi.org/10.1038/s41467-026-79221-1) · [Benchmark release](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0)
 
 ---
 
@@ -77,15 +76,9 @@ This ensures that larger-scale tests don't artificially inflate repeat density.
 
 ---
 
-## 4. HiFi Read Simulation
+## 4. Simulated input sequences
 
-Simulated reads mimic PacBio HiFi characteristics:
-
-| Parameter | Value |
-|-----------|-------|
-| Error rate | 0.1% (HiFi typical) |
-| Read structure | Tandem repeats of eccDNA sequence |
-| Copy number | Variable (2-10×) |
+The generator writes one monomer per read and introduces random base substitutions at a default rate of 0.1%. A Uecc read contains one genomic segment, a Mecc read contains one repeat unit, and a Cecc read contains one traversal of its joined segments. In the truth table, `copy_number` is 1 for Uecc and Cecc. For Mecc it counts candidate genomic loci. This fixture exercises classification starting at minimap2 alignment. It does not measure tandem-copy recovery or whole-pipeline sensitivity.
 
 ---
 
@@ -109,7 +102,7 @@ Simulated reads mimic PacBio HiFi characteristics:
 │  1. Run the minimal validation chain                            │
 │     - minimap2 → alignment                                      │
 │     - U/M classification                                        │
-│     - CeccDNA detection (LAST preferred; graph fallback)        │
+│     - CeccDNA detection with LAST                               │
 │  2. Output: uecc.csv, mecc.csv, cecc.csv                        │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -117,7 +110,7 @@ Simulated reads mimic PacBio HiFi characteristics:
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Evaluation Phase                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. Match predictions to ground truth by read_id                │
+│  1. Match predictions by read ID, then by coordinates           │
 │  2. Calculate TP, FP, FN for each eccDNA type                   │
 │  3. Compute recall, precision, F1, accuracy                     │
 │  4. Output: validation_report.json                              │
@@ -130,11 +123,9 @@ Simulated reads mimic PacBio HiFi characteristics:
 
 ### 6.1 Matching Strategy
 
-Predictions are matched to ground truth using **read_id** as the primary key:
+The evaluator scores each type separately. It keeps the first prediction for each base read ID (the part before `|`) and first tries to match an unused truth record by that ID.
 
-- **True Positive (TP)**: Predicted read_id exists in ground truth with correct type
-- **False Positive (FP)**: Predicted read_id not in ground truth, or wrong type
-- **False Negative (FN)**: Ground truth read_id not in predictions
+If no ID matches, it searches unused records on the same chromosome. A record matches when both endpoints differ by at most 50 bp. Otherwise an overlap covering at least 80% of **either** interval qualifies. Among overlap-only candidates the largest overlap in bases wins. The evaluator counts each matched pair as one TP, each remaining prediction as an FP and each unmatched truth record as an FN. This rule evaluates detection at read level and does not test complete segment order or orientation.
 
 ### 6.2 Metric Definitions
 
@@ -231,7 +222,7 @@ In the validation pipeline, `UMeccClassifier.run()` outputs `uecc_df`, `mecc_df`
 - Borderline U/M samples (e.g., U uniqueness veto or M multi-locus coverage insufficient)
 - Low-quality alignment rows
 
-**Final detection status** should be determined by checking `uecc.csv`, `mecc.csv`, and `cecc.csv`. Only reads absent from all three are truly undetected.
+Use the predictions from `uecc.csv`, `mecc.csv` and `cecc.csv` and the per-type matching rules in §6.1 to determine detection status.
 
 ---
 

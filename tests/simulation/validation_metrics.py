@@ -202,7 +202,7 @@ class ValidationCalculator:
         gt_overlap_frac = overlap_len / gt_len
         pred_overlap_frac = overlap_len / pred_len
 
-        # Both must have sufficient overlap
+        # Either interval may meet the overlap threshold.
         return (gt_overlap_frac >= self.overlap_threshold or
                 pred_overlap_frac >= self.overlap_threshold)
 

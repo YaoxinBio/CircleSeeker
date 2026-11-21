@@ -1,6 +1,6 @@
 # U/M/C eccDNA 覆盖度模型与 CeccBuild 说明
 
-本文件描述 CircleSeeker 当前实现中的 U/M 分类覆盖度模型，以及 CeccBuild 的检测策略。U/M 判别基于覆盖度与位点聚类；Cecc 默认由 LAST 驱动的重复模式检测完成，图结构链式模型仅作为回退方案。
+U/M 分类使用覆盖度和位点聚类。CeccBuild 需要 LAST 对双倍序列进行比对，再检查片段顺序与闭环。
 
 > 说明：文档聚焦 um_classify/cecc_build 的实际逻辑；如需完整代码细节，请参阅 `src/circleseeker/modules/um_classify.py` 与 `src/circleseeker/modules/cecc_build.py`。
 
@@ -84,7 +84,7 @@ CeccBuild 使用 LAST 对双倍化序列进行高精度比对，通过图结构�
 
 **核心思路**：
 - 输入：双倍化序列 `Q = S + S`（长度 `2L`）
-- 比对：使用 LAST（lastal | last-split）获得高精度、最优链比对
+- 比对：使用 LAST 对双倍序列进行比对并选择比对链
 - 分析：基于图结构检测环状模式
 
 ### 4.2 图结构算法（Graph-based Detection）
@@ -131,20 +131,20 @@ valid = (flips % 2 == 0)  # 偶数次翻转才能形成有效闭合
 lastdb -P threads db_prefix reference.fa
 
 # 2. 比对 + 最优链选择
-lastal -P threads db_prefix query.fa | last-split > output.maf
+lastal -P threads --split db_prefix query.fa > output.maf
 ```
 
-**last-split 的作用**：为每个 query 区域选择最优比对链，过滤多重映射噪声。
+当 `lastal` 不支持 `--split` 时，CeccBuild 依次运行 `lastal` 和 `last-split` 选择比对链。
 
 ### 4.4 关键参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `min_match_degree` | 最小匹配度（覆盖度 × 100） | 90.0 |
+| `min_match_degree` | 最小匹配度（覆盖度 × 100） | 95.0 |
 | `overlap_threshold` | 互惠重叠阈值 | 0.95 |
 | `min_segments` | 最少片段数 | 2 |
-| `position_tolerance` | locus 合并位置容差 | 100 bp |
-| `edge_tolerance` | query 边界容差 | 10 bp |
+| `position_tolerance` | locus 合并位置容差 | 50 bp |
+| `edge_tolerance` | query 边界容差 | 20 bp |
 | `half_query_buffer` | 双倍序列中点缓冲 | 50 bp |
 
 ### 4.5 输出

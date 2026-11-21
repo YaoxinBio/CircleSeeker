@@ -1363,6 +1363,17 @@ class TestAugmentationWritesByPosition:
         after = confirmed.drop(index=1)[["eccDNA_id", "reads_count"]]
         pd.testing.assert_frame_equal(after, before[["eccDNA_id", "reads_count"]])
 
+    def test_whole_copy_number_totals_keep_integer_dtype(self):
+        from circleseeker.modules.ecc_unify import _augment_confirmed_from_overlap
+
+        confirmed, simple, mapping = self._tables()
+        simple["copy_number"] = [2.0]
+        original_dtype = confirmed["copy_number"].dtype
+        _augment_confirmed_from_overlap(confirmed, simple, mapping, None, {})
+
+        assert confirmed["copy_number"].dtype == original_dtype
+        assert confirmed["copy_number"].tolist() == [10, 22, 30]
+
 
 class TestRedundantSimpleScanIsBounded:
     """The per-chromosome candidate scan must not start at index 0 every time.
