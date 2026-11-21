@@ -931,7 +931,7 @@ class TestFastaStatsAreCountedInBlocks:
     @pytest.mark.parametrize("name", sorted(CASES))
     def test_block_scan_matches_the_line_scan(self, tmp_path, name):
         fasta = tmp_path / f"{name}.fasta"
-        fasta.write_text(self.CASES[name], newline="")
+        fasta.write_bytes(self.CASES[name].encode("utf-8"))
         summary = self._summary(tmp_path)
 
         by_line = summary._scan_fasta_by_line(fasta)
@@ -954,7 +954,7 @@ class TestFastaStatsAreCountedInBlocks:
         so each caller keeps its own answer.
         """
         fasta = tmp_path / f"{name}.fasta"
-        fasta.write_text(self.CASES[name], newline="")
+        fasta.write_bytes(self.CASES[name].encode("utf-8"))
         summary = self._summary(tmp_path)
 
         if summary._scan_fasta_in_blocks(fasta) is not None:
@@ -966,7 +966,7 @@ class TestFastaStatsAreCountedInBlocks:
 
     def test_declined_input_still_reports_via_fallback(self, tmp_path):
         fasta = tmp_path / "crlf.fasta"
-        fasta.write_text(self.CASES["crlf"], newline="")
+        fasta.write_bytes(self.CASES["crlf"].encode("utf-8"))
         summary = self._summary(tmp_path)
 
         stats = summary.process_fasta(fasta)
@@ -979,7 +979,7 @@ class TestFastaStatsAreCountedInBlocks:
         # sequences straddle boundaries in both directions.
         records = "".join(f">seq{i}\n" + "ACGT" * 900 + "\n" for i in range(40))
         fasta = tmp_path / "big.fasta"
-        fasta.write_text(records, newline="")
+        fasta.write_bytes(records.encode("utf-8"))
         summary = self._summary(tmp_path)
 
         assert summary._scan_fasta_in_blocks(fasta, block_size=1024) == summary._scan_fasta_by_line(fasta)
@@ -988,7 +988,8 @@ class TestFastaStatsAreCountedInBlocks:
         import builtins
 
         fasta = tmp_path / "many.fasta"
-        fasta.write_text("".join(f">s{i}\nACGTACGTAC\n" for i in range(500)), newline="")
+        records = "".join(f">s{i}\nACGTACGTAC\n" for i in range(500))
+        fasta.write_bytes(records.encode("utf-8"))
 
         counter = {"lines": 0}
         real_open = builtins.open
@@ -1047,7 +1048,8 @@ class TestFastaIsScannedOnce:
     @staticmethod
     def _fasta(tmp_path):
         path = tmp_path / "reads.fasta"
-        path.write_text("".join(f">r{i}\n{'ACGT' * 5}\n" for i in range(40)), newline="")
+        records = "".join(f">r{i}\n{'ACGT' * 5}\n" for i in range(40))
+        path.write_bytes(records.encode("utf-8"))
         return path
 
     def test_second_pass_reuses_the_first_scan(self, tmp_path):
@@ -1095,7 +1097,7 @@ class TestFastaIsScannedOnce:
     def test_a_different_file_is_still_scanned(self, tmp_path):
         first = self._fasta(tmp_path)
         second = tmp_path / "other.fasta"
-        second.write_text(">x\nACGTACGT\n", newline="")
+        second.write_bytes(b">x\nACGTACGT\n")
         csv = tmp_path / "processed.csv"
         csv.write_text("readName,readClass\nx,CtcR-perfect\n")
 
@@ -1124,7 +1126,7 @@ class TestDeclinedScanIsNotRepeated:
 
     def test_declined_result_is_cached(self, tmp_path):
         fasta = tmp_path / "crlf.fasta"
-        fasta.write_text(">a\r\nACGT\r\n>b\r\nTTTT\r\n", newline="")
+        fasta.write_bytes(b">a\r\nACGT\r\n>b\r\nTTTT\r\n")
         summary = self._summary(tmp_path)
 
         assert summary._scan_fasta_in_blocks(fasta) is None
@@ -1150,12 +1152,12 @@ class TestDeclinedScanIsNotRepeated:
 
     def test_a_changed_file_is_rescanned(self, tmp_path):
         fasta = tmp_path / "f.fasta"
-        fasta.write_text(">a\r\nACGT\r\n", newline="")
+        fasta.write_bytes(b">a\r\nACGT\r\n")
         summary = self._summary(tmp_path)
         assert summary._scan_fasta_in_blocks(fasta) is None
 
         # Same path, different content: the size/mtime key must miss.
-        fasta.write_text(">a\nACGT\n>b\nTTTT\n", newline="")
+        fasta.write_bytes(b">a\nACGT\n>b\nTTTT\n")
         assert summary._scan_fasta_in_blocks(fasta) == (2, 8)
 
 
@@ -1177,13 +1179,13 @@ class TestScanCacheKeyIsSpecific:
         import os
 
         fasta = tmp_path / "f.fasta"
-        fasta.write_text(">a\nACGT\n", newline="")
+        fasta.write_bytes(b">a\nACGT\n")
         summary = self._summary(tmp_path)
         first = summary._scan_fasta_in_blocks(fasta)
         before = fasta.stat()
 
         # same byte count, different content, mtime forced back
-        fasta.write_text(">ab\nACG\n", newline="")
+        fasta.write_bytes(b">ab\nACG\n")
         os.utime(fasta, ns=(before.st_atime_ns, before.st_mtime_ns))
         assert fasta.stat().st_size == before.st_size
 
