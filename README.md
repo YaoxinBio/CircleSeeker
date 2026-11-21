@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20or%20commercial-green.svg)](LICENSE)
 
-Comprehensive detection and characterization of extrachromosomal circular DNA (eccDNA) from PacBio HiFi sequencing data.
+CircleSeeker reconstructs and classifies extrachromosomal circular DNA (eccDNA) from PacBio HiFi reads. It is the analysis software developed for Multi-Modal Circle-seq (MMC-seq). [Published study and software citation](#citation)
 
 > [CircleSeeker v1.6.1](https://github.com/YaoxinBio/CircleSeeker/releases/tag/v1.6.1) was released on 2026-09-12 at commit `245048e2`. See the [release notes](docs/releases/v1.6.1.md) for the validation history.
 
@@ -45,6 +45,16 @@ circleseeker --version
 
 To reproduce an analysis, record the Git commit and dependency versions alongside the results.
 
+### Install from Bioconda
+
+Bioconda provides CircleSeeker v1.6.1. The command below includes the NetworkX minimum used by the tagged implementation. [Bioconda package](https://bioconda.github.io/recipes/circleseeker/README.html)
+
+```bash
+conda create -n circleseeker -c conda-forge -c bioconda circleseeker=1.6.1 "networkx>=3.2"
+conda activate circleseeker
+circleseeker --version
+```
+
 ### Manual Installation
 
 If you prefer to install dependencies manually:
@@ -57,7 +67,7 @@ conda activate circleseeker
 # 2. Core Python packages (conda-forge)
 conda install -c conda-forge -y \
   pip biopython pandas numpy tqdm pyyaml \
-  click networkx intervaltree packaging \
+  click "networkx>=3.2" intervaltree packaging \
   matplotlib python-graphviz pysam
 
 # 3. Bioinformatics tools (bioconda)
@@ -334,23 +344,27 @@ conda install -c bioconda -c conda-forge \
 
 ## Documentation
 
-For detailed documentation, see the `docs/` directory:
-
-- [Pipeline Modules](docs/Pipeline_Modules.md) - Detailed algorithm descriptions
-- [UMC Classification Model](docs/UMC_Classification_Model.md) - U/M/C classification and CeccBuild algorithm
-- [SplitReads-Core Algorithm](docs/SplitReads_Core_Algorithm.md) - Built-in split-read inference algorithm (inspired by [CReSIL](https://github.com/Peppermint-Lab/CReSIL))
-- [CLI Reference](docs/CLI_Reference.md) - Complete command-line options
-- [Validation Methodology](docs/Validation_Methodology_en.md) - Synthetic U/M/C validation and recall benchmark
+| English | 中文 |
+| --- | --- |
+| [Command-line reference](docs/CLI_Reference_en.md) | [命令行参考](docs/CLI_Reference.md) |
+| [Output formats](docs/Output_Format_Reference_en.md) | [输出格式](docs/Output_Format_Reference.md) |
+| [Configuration](docs/Configuration_Reference_en.md) | [配置参考](docs/Configuration_Reference.md) |
+| [Pipeline modules](docs/Pipeline_Modules_en.md) | [流程模块](docs/Pipeline_Modules.md) |
+| [U/M/C classification](docs/UMC_Classification_Model_en.md) | [U/M/C 分类模型](docs/UMC_Classification_Model.md) |
+| [SplitReads-Core algorithm](docs/SplitReads_Core_Algorithm_en.md) | [SplitReads-Core 算法](docs/SplitReads_Core_Algorithm.md) |
+| [Temporary directory](docs/Runtime_Tmp_Dir_en.md) | [临时目录](docs/Runtime_Tmp_Dir.md) |
+| [U/M/C classification tests](docs/Validation_Methodology_en.md) | [U/M/C 分类验证](docs/Validation_Methodology.md) |
 
 ## Citation
 
-Use the software citation in [CITATION.cff](CITATION.cff), recording the version
-and the exact commit or version DOI used for your analysis. A DOI will be added
-after the release is archived; no DOI has been assigned to this preparation.
+If you use CircleSeeker, cite the MMC-seq paper and record the software version used in your analysis.
 
-CircleSeeker is the computational pipeline developed as part of the MMC-seq
-methodology. Historical authors and code provenance are preserved in
-[PROVENANCE.md](PROVENANCE.md).
+- Zhang, Y., You, M., Zhou, C. et al. MMC-seq enables efficient long-read eccDNA profiling from low-input samples. *Nature Communications* (2026). [doi:10.1038/s41467-026-79221-1](https://doi.org/10.1038/s41467-026-79221-1)
+- Zhang, Y. & Yu, L. X. *CircleSeeker* (v1.6.1). Zenodo (2026). [doi:10.5281/zenodo.22718199](https://doi.org/10.5281/zenodo.22718199)
+
+The paper reports CircleSeeker v1.6.1 for the primary libraries and all 27 benchmark scenarios. The simulator, evaluator and result tables are archived as CircleSeeker-benchmark v1.1.0. [Benchmark release](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0) · [Benchmark archive](https://doi.org/10.5281/zenodo.22791547)
+
+If you used a development checkout, record its Git commit. [Machine-readable citation](CITATION.cff) · [Release provenance](PROVENANCE.md)
 
 ## License
 

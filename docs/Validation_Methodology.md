@@ -2,6 +2,8 @@
 
 本手册描述 `tests/simulation/` 中实现的最小 U/M/C 分类验证。生成的序列直接进入候选比对步骤。
 
+复现 MMC-seq 论文中按测序平台匹配的基准测试时，请使用 CircleSeeker v1.6.1。论文使用的模拟器、评估脚本和结果表归档于 CircleSeeker-benchmark v1.1.0。[论文](https://doi.org/10.1038/s41467-026-79221-1) · [基准测试发布记录](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0)
+
 ---
 
 ## 1. 概述

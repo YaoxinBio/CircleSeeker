@@ -1,8 +1,10 @@
 cff-version: 1.2.0
-message: "Please cite the exact CircleSeeker version used in your research."
+message: "Please cite the MMC-seq article and the exact CircleSeeker version used in your research."
 type: software
 title: CircleSeeker
 version: 1.6.1
+date-released: "2026-09-12"
+doi: "10.5281/zenodo.22718199"
 authors:
   - family-names: Zhang
     given-names: Yaoxin
@@ -16,3 +18,49 @@ keywords:
   - eccDNA
   - PacBio HiFi
   - circular DNA
+preferred-citation:
+  type: article
+  title: "MMC-seq enables efficient long-read eccDNA profiling from low-input samples"
+  journal: "Nature Communications"
+  year: 2026
+  date-published: "2026-11-04"
+  doi: "10.1038/s41467-026-79221-1"
+  authors:
+    - family-names: Zhang
+      given-names: Yaoxin
+    - family-names: You
+      given-names: Muyuan
+    - family-names: Zhou
+      given-names: Congcong
+    - family-names: Guo
+      given-names: Yajuan
+    - family-names: Huang
+      given-names: Yaohua
+    - family-names: Wu
+      given-names: Suyue
+    - family-names: Chen
+      given-names: Xiaoqian
+    - family-names: Sun
+      given-names: Haobo
+    - family-names: Yu
+      given-names: Xinqi Leo
+    - family-names: Feng
+      given-names: Qi
+    - family-names: Wang
+      given-names: Wenqin
+    - family-names: Huang
+      given-names: Tao
+    - family-names: Zhao
+      given-names: Yan
+    - family-names: Yang
+      given-names: Hui
+    - family-names: Zhao
+      given-names: Qiang
+    - family-names: Hua
+      given-names: Wei
+    - family-names: Han
+      given-names: Bin
+    - family-names: Lu
+      given-names: Tingting
+    - family-names: Mao
+      given-names: Ying

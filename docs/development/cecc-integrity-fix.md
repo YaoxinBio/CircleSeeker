@@ -1,16 +1,15 @@
 # Cecc integrity fixes after the v1.5.1 audit
 
-The 1.5.2 release preparation derives from tag `v1.5.1`, commit
+This September 2026 development record describes a release candidate derived from tag `v1.5.1`, commit
 `87ae7f09c11a4795532a7524db1958c0c11a5b2d` (2026-08-16), and the validated
 repair commit `44c79b8eafdb1f60f949d69c9eeab12a69ce570b`. The earlier draft
-based on `055110f` is obsolete. Final publication and replacement of archived
-analyses require separate acceptance.
+based on `055110f` had been superseded. At this checkpoint, publishing the software
+and replacing archived analyses required separate acceptance.
 
-The dataset rebuild uses the frozen internal version `1.5.1+ceccfix.20260908`.
-The release preparation identified itself as `1.5.2` at the time; it ships as 1.6.1. its algorithm source is
-compared to that repair commit, excluding only `__version__.py`. Historical tags
-and results retain their original identities. See [provenance](../../PROVENANCE.md)
-and the [release notes](../releases/v1.6.1.md).
+The dataset rebuild used the frozen internal version `1.5.1+ceccfix.20260908`.
+The release candidate identified itself as `1.5.2` and ultimately shipped as v1.6.1.
+The source comparison excludes `__version__.py`. For the commits used at each stage
+and the published results, see [provenance](../../PROVENANCE.md) and the [v1.6.1 release record](../releases/v1.6.1.md).
 
 The 2026-09-08 audit replayed 59 supporting raw reads for 52 flagged Cecc
 records. All 52 reproduced the historical wrong sequence and coordinates while
@@ -154,7 +153,7 @@ checks TP, recall, precision, F1 and FP; replay rejects all 19 failed repair out
 and accepts unchanged baseline controls. It was also applied to the raw-input run.
 The original `055110f` batch was cancelled. The author subsequently authorized
 a new full rebuild with `44c79b8`; see the dated release notes for its status.
-Formal publication remains pending completion and acceptance of that rebuild.
+At that stage, the software release awaited completion and acceptance of the rebuild.
 The residual repair replays actual saved SplitReads intersection/end evidence
 through graph resolution, strand-preserving curation, unification and packaging.
 The Ara case follows Chr5+ -> Chr4+ -> Chr1+, equivalent to the existing Confirmed

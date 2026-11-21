@@ -2,6 +2,8 @@
 
 This guide describes the minimal U/M/C classification test implemented under `tests/simulation/`. Its inputs go directly to candidate alignment.
 
+To reproduce the platform-matched benchmark in the MMC-seq paper, use CircleSeeker v1.6.1 with the frozen simulator, evaluator and result tables in CircleSeeker-benchmark v1.1.0. [Published study](https://doi.org/10.1038/s41467-026-79221-1) · [Benchmark release](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0)
+
 ---
 
 ## 1. Overview

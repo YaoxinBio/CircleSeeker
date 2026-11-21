@@ -1,6 +1,6 @@
 {
   "title": "CircleSeeker",
-  "description": "Comprehensive eccDNA detection from PacBio HiFi sequencing data. CircleSeeker identifies, classifies and characterises extrachromosomal circular DNA using two evidence-based callers: CtcReads-Core, which reads the tandem-repeat concatemers that rolling-circle amplification leaves inside a single read, and SplitReads-Core, which infers circles from split-read breakpoints. Calls are classified as UeccDNA, MeccDNA, CeccDNA or XeccDNA.",
+  "description": "CircleSeeker is the PacBio HiFi analysis software developed for MMC-seq. It reconstructs extrachromosomal circular DNA using tandem-repeat evidence from CtcReads-Core and split-read evidence from SplitReads-Core. It reports unique-locus (UeccDNA), multi-locus (MeccDNA) and chimeric (CeccDNA) circles. A multi-locus call represents one sequence with several candidate source loci.",
   "creators": [
     {"name": "Zhang, Yaoxin"},
     {"name": "Yu, Leo Xinqi"}
@@ -19,6 +19,11 @@
       "identifier": "https://github.com/YaoxinBio/CircleSeeker",
       "relation": "isSupplementTo",
       "scheme": "url"
+    },
+    {
+      "identifier": "10.1038/s41467-026-79221-1",
+      "relation": "isDescribedBy",
+      "scheme": "doi"
     }
   ]
 }

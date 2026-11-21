@@ -11,10 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.1] - 2026-09-12
 
-1.6.0 is skipped. It was tagged and released briefly, then withdrawn within
-hours over a licensing question, before it reached Bioconda or any user. GitHub
-reserves a tag name permanently once a release has carried it, so the number
-cannot be reused. Nothing was ever published under it.
+The v1.6.0 GitHub release was withdrawn over a licensing question. Its Zenodo
+deposit remains available as a historical record. The MMC-seq paper cites
+v1.6.1. [Historical v1.6.0 deposit](https://zenodo.org/records/22718008) · [Published paper](https://doi.org/10.1038/s41467-026-79221-1)
 
 Numbered 1.6.x rather than 1.5.2: this release changes what gets written.
 Inferred multi-segment CeccDNA structures are now chosen deterministically

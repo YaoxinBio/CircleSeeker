@@ -10,11 +10,14 @@ and their tags are preserved here; this repository continues that version
 sequence and does not redefine those versions. Releases published to Bioconda
 under those version numbers were built from those same tags.
 
-v1.5.0 is the version benchmarked in the accompanying manuscript. v1.6.1 is the
-first release made from this repository; it corrects two defects that made
-deliverables vary between runs of identical code on identical input, so results
-produced with v1.6.1 are reproducible where results from earlier versions were
-not. See CHANGELOG.md.
+Zhang et al. report using **CircleSeeker v1.6.1** for the primary libraries and
+all 27 benchmark runs in the published MMC-seq study. The evaluator and result
+tables are archived separately as **CircleSeeker-benchmark v1.1.0**.
+[Published methods and code availability](https://www.nature.com/articles/s41467-026-79221-1_reference.pdf) · [Benchmark release](https://github.com/YaoxinBio/CircleSeeker-benchmark/releases/tag/v1.1.0)
+
+CircleSeeker v1.6.1 corrected two sources of run-to-run variation in the
+deliverables. The paper cites the software
+archive under DOI `10.5281/zenodo.22718199`. [Software archive](https://doi.org/10.5281/zenodo.22718199) · [Changelog](CHANGELOG.md)
 
 ## Version correspondence
 
