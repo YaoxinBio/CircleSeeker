@@ -11,11 +11,7 @@
 
 Comprehensive detection and characterization of extrachromosomal circular DNA (eccDNA) from PacBio HiFi sequencing data.
 
-> **1.6.1 release preparation:** distribution files and validation are being prepared.
-> The GitHub release remains a draft until the complete dataset rebuild is accepted.
-> See [release notes](docs/releases/v1.6.1.md) for changes and validation scope.
-> This preparation matches repaired computation commit `44c79b8`. The earlier
-> `5b6a79f` GitHub draft and its assets are obsolete and await replacement.
+> [CircleSeeker v1.6.1](https://github.com/YaoxinBio/CircleSeeker/releases/tag/v1.6.1) was released on 2026-09-12 at commit `245048e2`. See the [release notes](docs/releases/v1.6.1.md) for the validation history.
 
 ## eccDNA Classification
 
@@ -24,7 +20,7 @@ CircleSeeker identifies and classifies eccDNA into three categories:
 | Type | Full Name | Description |
 |------|-----------|-------------|
 | **UeccDNA** | Unique eccDNA | Derived from a single genomic locus |
-| **MeccDNA** | Multiple eccDNA | Derived from multiple distinct genomic loci |
+| **MeccDNA** | Multiple eccDNA | One eccDNA sequence matches several candidate genomic loci. Its source cannot be resolved to a unique locus. |
 | **CeccDNA** | Chimeric eccDNA | Formed by fusion of segments from different genomic locations |
 
 ## Installation
@@ -32,7 +28,7 @@ CircleSeeker identifies and classifies eccDNA into three categories:
 ### Quick Install (Recommended)
 
 ```bash
-# After v1.6.1 is published, clone the exact release
+# Clone the tagged release
 git clone --branch v1.6.1 --depth 1 https://github.com/YaoxinBio/CircleSeeker.git
 cd CircleSeeker
 
@@ -47,10 +43,7 @@ python -m pip install .
 circleseeker --version
 ```
 
-Before the final tag is published, use a specific commit from the preparation
-branch for evaluation. The generic Bioconda installation may still select an older
-release; only use `circleseeker=1.6.1` there after the updated recipe is merged
-and its package is available.
+To reproduce an analysis, record the Git commit and dependency versions alongside the results.
 
 ### Manual Installation
 
@@ -70,14 +63,14 @@ conda install -c conda-forge -y \
 # 3. Bioinformatics tools (bioconda)
 conda install -c bioconda -c conda-forge -y \
   minimap2 samtools tidehunter cd-hit last \
-  bedtools mappy pybedtools
+  bedtools pybedtools
 
 # 4. Install CircleSeeker
 cd CircleSeeker
 python -m pip install .
 ```
 
-> **Note**: CircleSeeker includes SplitReads-Core, a built-in inference module inspired by [CReSIL](https://github.com/Peppermint-Lab/CReSIL) and optimized for HiFi long reads. No external inference tools are required.
+> **Note**: CircleSeeker includes SplitReads-Core, a built-in inference module inspired by [CReSIL](https://github.com/Peppermint-Lab/CReSIL) and optimized for HiFi long reads. The caller invokes the external `minimap2` executable for alignment.
 
 ## Quick Start
 
@@ -118,6 +111,7 @@ circleseeker \
 - `-v, --verbose` - Increase verbosity (-v for INFO, -vv for DEBUG)
 - `-h, --help` - Show help message
 - `--keep-tmp` - Keep temporary files
+- `--fast-align` - Use faster LAST alignment settings for CeccDNA detection
 - `--turbo` - Enable turbo mode (use RAM-backed `/dev/shm` for faster I/O)
 
 ## Pipeline Overview
@@ -130,9 +124,17 @@ CircleSeeker implements a 16-step analysis pipeline organized into 5 phases, dri
 
 ### Architecture
 
-<p align="center">
-  <img src="docs/images/architecture.jpg" width="700" alt="CircleSeeker Architecture">
-</p>
+```mermaid
+flowchart TD
+    R[HiFi reads] --> P[TideHunter and tandem candidate extraction]
+    P --> C[CtcReads-Caller: minimap2, U/M classification and LAST]
+    R --> F[Filter reads assigned to CtcReads]
+    P --> F
+    F --> S[SplitReads-Core: minimap2 alignment and breakpoint graph]
+    C -->|Confirmed U/M/C| I[Integrate overlapping calls]
+    S -->|Inferred U/C| I
+    I --> O[Step 16 tables, sequences and reports]
+```
 
 - **Preprocessing** (Steps 1-3): Dependency checks, tandem repeat detection, circular candidate extraction
 - **CtcReads-Caller** (Steps 4-9): Alignment, U/M/C classification, deduplication — producing **Confirmed** eccDNA
@@ -183,52 +185,20 @@ CircleSeeker implements a 16-step analysis pipeline organized into 5 phases, dri
 
 ## Output Files
 
-```
-output_dir/sample_name/
-├── sample_name_Confirmed_UeccDNA/
-│   ├── sample_name_UeccDNA_C.fasta      # Confirmed unique eccDNA sequences
-│   ├── sample_name_UeccDNA.bed          # Genomic coordinates (BED format)
-│   └── sample_name_UeccDNA.core.csv     # Detailed information table
-├── sample_name_Confirmed_MeccDNA/
-│   ├── sample_name_MeccDNA_C.fasta      # Confirmed multiple eccDNA sequences
-│   ├── sample_name_MeccSites.bed        # All genomic sites
-│   ├── sample_name_MeccBestSite.bed     # Best hit per eccDNA
-│   └── sample_name_MeccSites.core.csv   # Detailed information table
-├── sample_name_Confirmed_CeccDNA/
-│   ├── sample_name_CeccDNA_C.fasta      # Confirmed chimeric eccDNA sequences
-│   ├── sample_name_CeccSegments.bed     # All segments
-│   ├── sample_name_CeccJunctions.bedpe  # Junction information
-│   └── sample_name_CeccSegments.core.csv # Detailed information table
-├── sample_name_Inferred_eccDNA/
-│   ├── sample_name_UeccDNA_I.csv        # Inferred simple eccDNA
-│   ├── sample_name_UeccDNA_I.fasta      # Inferred simple sequences
-│   ├── sample_name_chimeric.csv         # Inferred chimeric eccDNA
-│   └── sample_name_CeccDNA_I.fasta      # Inferred chimeric sequences
-├── sample_name_merged_output.csv        # All eccDNA combined
-├── sample_name_report.html              # Interactive HTML report
-└── sample_name_summary.txt              # Summary statistics
-```
+For `-o results -p sample`, Step 16 writes these files directly in `results/`. Use `sample_eccDNA_summary.csv` as the starting point for analysis.
 
-### Output Format
+| File or directory | Contents |
+| --- | --- |
+| `sample_eccDNA_summary.csv` | One row per eccDNA with its class, evidence state, location, length and support |
+| `sample_eccDNA_regions.csv` | Source locus for Uecc, alternative loci for Mecc, ordered segments for Cecc |
+| `sample_eccDNA_reads.csv` | Individual supporting reads from the Confirmed branch |
+| `sample_eccDNA_all.fasta` | Available sequences from both evidence branches |
+| `UeccDNA/`, `MeccDNA/`, `CeccDNA/` | Per-type BED and FASTA files, plus a Cecc junction BEDPE when segments are present |
+| `sample_report.html`, `sample_summary.txt` | Reports copied from the summary step |
 
-The merged output file (`sample_name_merged_output.csv`) contains:
+Join the CSVs on `eccDNA_id` (for example `UeccDNA0001`). Use `read_count` for total read support. When a Confirmed call also has split-read support, `inferred_reads` counts the reads added during integration. The built-in caller gives standalone Inferred calls a fixed `confidence` of `0.95` for compatibility. This value cannot be interpreted as a 95% probability that an individual call exists.
 
-| Column | Description |
-|--------|-------------|
-| eccDNA_id | Unique identifier (e.g., UeccDNA1, MeccDNA1, CeccDNA1) |
-| original_id | Original eccDNA ID prior to final renumbering |
-| Regions | Genomic coordinates (chr:start-end format) |
-| Strand | DNA strand (+/-) |
-| Length | eccDNA size in base pairs |
-| eccDNA_type | Classification (UeccDNA/MeccDNA/CeccDNA) |
-| State | Detection method (Confirmed/Inferred) |
-| Seg_total | Number of segments (for chimeric eccDNA) |
-| Hit_count | Number of supporting reads |
-| reads_count | Number of reads supporting this eccDNA |
-| confidence_score | Detection confidence (0-1 scale, from prob_present for Inferred) |
-| copy_number | Estimated copy number (from coverage for Inferred) |
-
-> Note: Detailed per-type information is also available in `*.core.csv` files under `Confirmed_*` directories.
+For all column names, coordinate conventions, FASTA headers and intermediate files, see the [English output reference](docs/Output_Format_Reference_en.md) or [中文输出格式参考](docs/Output_Format_Reference.md).
 
 ## Configuration
 
@@ -249,12 +219,14 @@ tools:
     e: 0.1
     f: 2
 
+  alignment:
+    min_identity: 99.0           # Base identity threshold for Step 4 (%)
+
   minimap2_align:  # For candidate alignment (Step 4)
     preset: "map-hifi"
     max_target_seqs: 5
     additional_args: ""
     # Identity filtering with length-based compensation (HiFi optimized)
-    min_identity: 99.0           # Base identity threshold (%)
     identity_decay_per_10kb: 0.5 # Identity decay per 10kb of sequence length (%)
     min_identity_floor: 97.0     # Minimum identity floor (%)
 
@@ -283,7 +255,7 @@ For a complete list of configuration options, see the [Configuration Reference](
 | numpy | ≥1.23 | Numerical computing |
 | biopython | ≥1.81 | Sequence handling |
 | pysam | ≥0.22 | BAM/SAM processing |
-| networkx | ≥3.0 | Graph algorithms |
+| networkx | ≥3.2 | Graph algorithms |
 | intervaltree | ≥3.1 | Interval operations |
 | click | ≥8.1 | CLI framework |
 | pyyaml | ≥6.0 | Configuration parsing |
@@ -304,7 +276,6 @@ For a complete list of configuration options, see the [Configuration Reference](
 
 | Package | Description |
 |---------|-------------|
-| mappy | Python bindings for minimap2 (used by SplitReads-Core) |
 | pybedtools | Python wrapper for bedtools |
 
 ### Built-in Modules
@@ -358,7 +329,7 @@ circleseeker -i input.fa -r ref.fa -t 4
 **Missing Tools**: Install via conda
 ```bash
 conda install -c bioconda -c conda-forge \
-  tidehunter minimap2 samtools cd-hit last bedtools mappy pybedtools
+  tidehunter minimap2 samtools cd-hit last bedtools pybedtools
 ```
 
 ## Documentation

@@ -1,6 +1,6 @@
 # U/M/C eccDNA Coverage Model and CeccBuild Documentation
 
-This document describes the U/M classification coverage model and CeccBuild detection strategy implemented in CircleSeeker. U/M classification is based on coverage and locus clustering; Cecc detection is primarily driven by LAST-based repeat pattern detection, with a graph-based chain model as fallback.
+U/M classification uses coverage and locus clustering. CeccBuild requires LAST to align doubled sequences before checking segment order and closure.
 
 > Note: This document focuses on the actual logic of um_classify/cecc_build. For complete code details, please refer to `src/circleseeker/modules/um_classify.py` and `src/circleseeker/modules/cecc_build.py`.
 
@@ -84,7 +84,7 @@ CeccBuild uses LAST for high-precision alignment of doubled sequences, identifyi
 
 **Core Concept**:
 - Input: Doubled sequence `Q = S + S` (length `2L`)
-- Alignment: Use LAST (lastal | last-split) for high-precision, optimal chain alignment
+- Alignment: Use LAST to align the doubled sequence and select the alignment chain
 - Analysis: Graph-based circular pattern detection
 
 ### 4.2 Graph-based Algorithm
@@ -131,20 +131,20 @@ valid = (flips % 2 == 0)  # Even number of flips for valid closure
 lastdb -P threads db_prefix reference.fa
 
 # 2. Alignment + optimal chain selection
-lastal -P threads db_prefix query.fa | last-split > output.maf
+lastal -P threads --split db_prefix query.fa > output.maf
 ```
 
-**Role of last-split**: Selects optimal alignment chain for each query region, filtering multi-mapping noise.
+When `lastal` lacks `--split`, CeccBuild runs `lastal` followed by `last-split` to select the alignment chain.
 
 ### 4.4 Key Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `min_match_degree` | Minimum match degree (coverage × 100) | 90.0 |
+| `min_match_degree` | Minimum match degree (coverage × 100) | 95.0 |
 | `overlap_threshold` | Reciprocal overlap threshold | 0.95 |
 | `min_segments` | Minimum segment count | 2 |
-| `position_tolerance` | Locus merge position tolerance | 100 bp |
-| `edge_tolerance` | Query boundary tolerance | 10 bp |
+| `position_tolerance` | Locus merge position tolerance | 50 bp |
+| `edge_tolerance` | Query boundary tolerance | 20 bp |
 | `half_query_buffer` | Doubled sequence midpoint buffer | 50 bp |
 
 ### 4.5 Output

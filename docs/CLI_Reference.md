@@ -1,6 +1,6 @@
-# CircleSeeker CLI 使用手册（v1.1.0）
+# CircleSeeker CLI 使用手册
 
-本手册针对 CircleSeeker 1.1.0 的命令行界面，涵盖常用参数、调试选项、运行时行为与输出结构。默认安装后可通过 `circleseeker` 或 `CircleSeeker` 两个入口调用。
+安装后使用小写命令 `circleseeker`。本手册涵盖常用参数、调试选项和输出结构。
 
 ---
 
@@ -24,6 +24,7 @@ circleseeker -i reads.fasta -r reference.fa -o results/
 - `--keep-tmp` 保留临时目录（`.tmp_work`），默认删除；可显式覆盖配置文件中的 `keep_tmp` 设置
 - `--turbo` 启用 turbo 模式（使用 RAM-backed 临时目录加速 I/O）
 - `--preset CHOICE` 灵敏度预设（`relaxed` / `balanced` / `strict`）
+- `--fast-align` 为 CeccDNA 检测启用更快的 LAST 比对设置
 - `--show-steps` 查看 5 阶段 16 步骤及状态（不执行）
 - `--dry-run` 仅展示计划执行的操作，不实际运行
 
@@ -72,13 +73,13 @@ circleseeker validate
 
 ## 5. 执行生命周期
 
-1. **依赖检查** 启动时自动检测必需的外部工具（minimap2、samtools、cd-hit-est、lastal）。SplitReads-Core 是内置模块，仅需 `mappy` Python 包。若缺少依赖，程序会给出清晰的错误提示和安装建议。
+1. **依赖检查** 启动时自动检测必需的外部工具（minimap2、samtools、cd-hit-est、lastal）。内置的 SplitReads-Core 调用 `minimap2` 可执行程序进行比对。若缺少依赖，程序会给出清晰的错误提示和安装建议。
 2. **临时目录** 运行时所有中间文件写入 `<output>/.tmp_work/`（可通过 `runtime.tmp_dir` 配置，支持相对路径或绝对路径）。完成后根据 `--keep-tmp` 选择是否保留。
 3. **配置与检查点** 运行期间在输出目录保存 `config.yaml` 与 `<prefix>.checkpoint`；成功完成后会自动清理。使用 `--keep-tmp` 可保留这些文件以便调试或恢复中断的运行。
 4. **自动索引**
    - 若找不到参考基因组 `.mmi` 索引，会调用 `minimap2 -d` 自动生成；
    - 若 SplitReads-Core 推断阶段缺少 `.fai`，会尝试通过 `samtools faidx` 自动创建。
-5. **最终输出** `ecc_packager` 会将确认与推断结果、报告和汇总拷贝到 `<output>/<prefix>_*/` 目录结构，布局与 README 中的"Output Files"一致。
+5. **最终输出** `ecc_packager` 将汇总表、区域表、读段表、序列和报告写入 `-o` 指定的目录。
 
 ---
 
@@ -102,7 +103,7 @@ CircleSeeker 将 16 个内部步骤组织为 5 个阶段展示，核心是两条
 | | 3 | `tandem_to_ring` | 将重复结构转换为候选环状序列 |
 | **CtcReads-Caller** | 4 | `run_alignment` | 使用 minimap2 将候选片段比对至参考基因组 |
 | | 5 | `um_classify` | 基于覆盖度与位点聚类区分 UeccDNA / MeccDNA |
-| | 6 | `cecc_build` | LAST 优先的复杂 eccDNA 检测（不可用时回退图方法） |
+| | 6 | `cecc_build` | 使用 LAST 检测嵌合 eccDNA |
 | | 7 | `umc_process` | 生成 U/M/C FASTA 及汇总 |
 | | 8 | `cd_hit` | 去除冗余序列 |
 | | 9 | `ecc_dedup` | 合并并标准化坐标 |
@@ -120,21 +121,7 @@ CircleSeeker 将 16 个内部步骤组织为 5 个阶段展示，核心是两条
 
 ## 8. 输出结构概览
 
-完成后 `<output>/` 目录中典型内容如下：
-
-```
-<output>/
-├── <prefix>_merged_output.csv
-├── <prefix>_summary.txt
-├── <prefix>_report.html
-├── <prefix>_Confirmed_UeccDNA/
-├── <prefix>_Confirmed_MeccDNA/
-├── <prefix>_Confirmed_CeccDNA/
-├── <prefix>_Inferred_eccDNA/
-└── logs/（若启用额外日志）
-```
-
-各子目录的文件命名与 README 中的"Output Files"章节保持一致。
+使用 `-o results -p sample` 时，在 `results/sample_eccDNA_summary.csv` 查看每条 eccDNA。同一目录还包含 `sample_eccDNA_regions.csv`、`sample_eccDNA_reads.csv`、`sample_eccDNA_all.fasta`、各类型的子目录和报告。各列的含义见[输出格式参考](Output_Format_Reference.md)。
 
 ---
 

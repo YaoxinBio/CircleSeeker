@@ -1,6 +1,6 @@
-# CircleSeeker Pipeline 模块说明（v1.1.0）
+# CircleSeeker Pipeline 模块说明
 
-本文件概述 CircleSeeker 1.1.0 的 16 个管线步骤（分为 5 个阶段展示）、输入输出关系以及关键实现要点，帮助使用者理解整体流程与模块职责。
+本文件概述 CircleSeeker 的 16 个管线步骤（分为 5 个阶段展示）、输入输出关系以及关键实现要点，帮助使用者理解整体流程与模块职责。
 
 ---
 
@@ -38,13 +38,13 @@ CircleSeeker 以 5 个阶段串联 16 个步骤，既包含外部工具调用，
 | 3 | tandem_to_ring | Preprocessing | 内部 | TideHunter 输出 | 环状候选 FASTA/CSV |
 | 4 | run_alignment | CtcReads-Caller | 外部（minimap2） | 候选 FASTA、参考基因组 | alignment TSV |
 | 5 | um_classify | CtcReads-Caller | 内部 | alignment TSV | `um_classify.uecc.csv` / `mecc.csv` |
-| 6 | cecc_build | CtcReads-Caller | 内部 | 未分类对齐记录 | `cecc_build.csv` |
+| 6 | cecc_build | CtcReads-Caller | LAST 和内置模块 | 未分类对齐记录 | `cecc_build.csv` |
 | 7 | umc_process | CtcReads-Caller | 内部 | U/M/C CSV | 标准化表格、FASTA |
 | 8 | cd_hit | CtcReads-Caller | 外部（CD-HIT） | FASTA | 去冗余 FASTA |
 | 9 | ecc_dedup | CtcReads-Caller | 内部 | 各类 CSV/FASTA | 去重后的坐标与序列 |
 |10 | read_filter | SplitReads-Caller | 内部 | 原始 reads、tandem_to_ring.csv | 推断输入 FASTA |
 |11 | minimap2 | SplitReads-Caller | 外部（minimap2） | 参考基因组 | `.mmi` 索引（必要时自动生成） |
-|12 | ecc_inference | SplitReads-Caller | 内部 | 过滤后的 reads FASTA | 推断结果 TSV/FASTA |
+|12 | ecc_inference | SplitReads-Caller | minimap2 和内置模块 | 过滤后的 reads FASTA | 推断结果 TSV/FASTA |
 |13 | curate_inferred_ecc | SplitReads-Caller | 内部 | 推断结果 | 精炼后的表格与 FASTA（内部调用 `iecc_curator`） |
 |14 | ecc_unify | Integration | 内部 | 确认/推断 CSV | 合并表格、重叠统计 |
 |15 | ecc_summary | Integration | 内部 | 合并表、原始统计 | HTML 报告、TXT 摘要 |
@@ -74,7 +74,7 @@ CircleSeeker 以 5 个阶段串联 16 个步骤，既包含外部工具调用，
    对对齐结果进行解析，基于"环坐标覆盖度 + locus 聚类"的模型划分 UeccDNA / MeccDNA；可选通过 `mapq_u_min` 与次级比对 veto 提升 Uecc 可靠性。输出 `um_classify.uecc.csv` / `um_classify.mecc.csv` / `um_classify.unclassified.csv`。判别模型详见 `docs/UMC_Classification_Model.md`。
 
 6. **cecc_build**
-   基于 `um_classify.unclassified.csv` 进行 Cecc 检测。优先使用 LAST 对双倍序列进行重复模式检测；若 LAST 或关键输入缺失则回退图方法。输出 `cecc_build.csv`。
+   基于 `um_classify.unclassified.csv` 进行 Cecc 检测。CeccBuild 需要 LAST 对双倍序列进行比对，运行此步骤需安装 `lastdb`、`lastal` 和 `last-split`。输出 `cecc_build.csv`。
 
 7. **umc_process**
    统一整理 U/M/C 三类结果，生成标准化 CSV 与 FASTA；若 `enable_xecc=true` 会额外导出 XeccDNA FASTA。
@@ -91,7 +91,7 @@ CircleSeeker 以 5 个阶段串联 16 个步骤，既包含外部工具调用，
     使用 Sieve 根据 `tandem_to_ring.csv` 过滤 CtcR reads，生成推断输入 FASTA；若 CSV 缺失则保留全部 reads。
 
 11. **minimap2**
-    检查并生成参考基因组 `.mmi` 索引，用于推断阶段。SplitReads-Core 使用 mappy 直接进行比对，不需要生成 BAM 文件。
+    检查并生成参考基因组 `.mmi` 索引，用于推断阶段。内置的 SplitReads-Core 调用外部 `minimap2` 比对并读取 PAF 结果。
 
 12. **ecc_inference**
     - 使用内置的 SplitReads-Core 进行推断：基于 split-reads 比对模式检测 eccDNA。
@@ -101,7 +101,7 @@ CircleSeeker 以 5 个阶段串联 16 个步骤，既包含外部工具调用，
     - 详细算法说明请参阅 [`docs/SplitReads_Core_Algorithm.md`](SplitReads_Core_Algorithm.md)。
 
 13. **curate_inferred_ecc**
-    对推断结果进行清洗、格式化，生成简单/嵌合 CSV；若参考基因组可用且 pysam 可用，会额外生成 FASTA（内部调用 `iecc_curator` 模块）。输出的推断数据包含 `num_split_reads`（支持 reads 数）、`prob_present`（存在概率）、`hifi_abundance`（覆盖度估计）等指标。
+    整理推断结果并生成简单或嵌合 CSV。有参考基因组和 pysam 时还会生成 FASTA。`num_split_reads` 计支持读段数，`hifi_abundance` 是经 `min(coverage / 100, 1)` 归一化的覆盖度代理值。SplitReads 适配器使用固定兼容值 `prob_present=0.95` 和 `prob_artifact=0.0`。每条 Inferred 记录的 `confidence` 继承相同的占位值。
 
 ### 3.4 Integration（步骤 14-15）
 
@@ -116,13 +116,13 @@ CircleSeeker 以 5 个阶段串联 16 个步骤，既包含外部工具调用，
 ### 3.5 Packaging（步骤 16）
 
 16. **ecc_packager**
-    按固定结构复制并重命名文件，形成最终产物目录（Confirmed_U/M/C、Inferred_eccDNA、报告等），同时清理临时文件（除非启用 `--keep-tmp`）。XeccDNA 不再拷贝到最终目录，源 reads 已并入推断输入。
+    将主表、区域表、读段表、总 FASTA 及各类型文件直接写入 `-o` 指定的目录，并复制已有报告。可使用 `--keep-tmp` 保留中间文件。详见[输出格式参考](Output_Format_Reference.md)。
 
 ---
 
 ## 4. 运行时注意事项
 
-- **外部依赖** 请确认 `tidehunter`, `cd-hit-est`, `minimap2`, `samtools` 均在 `PATH` 内。推断引擎 SplitReads-Core 已内置，无需额外安装。若启用 LAST 检测，需额外安装 LAST（`lastdb`/`lastal`）。
+- **外部依赖** 请确认 `tidehunter`, `cd-hit-est`, `minimap2`, `samtools` 均在 `PATH` 内。内置的 SplitReads-Core 调用外部 `minimap2`。运行 CeccBuild 需安装 LAST 的 `lastdb`、`lastal` 和 `last-split`。
 - **检查点机制** 每个步骤开始前都会写入 `<prefix>.checkpoint`，一旦失败可通过 `--resume` 从最近步骤继续；`--force` 可清除状态后重跑。
 - **配置继承** 所有参数均由 `circleseeker.config.Config` 驱动，可通过 YAML 或 CLI 覆写。文档中的默认值等同于仓库内置配置。
 - **调试工具** `circleseeker --show-steps` 可查看当前 5 阶段步骤状态；`show-checkpoint` 子命令能列出历史执行记录。

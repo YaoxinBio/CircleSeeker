@@ -1,4 +1,4 @@
-# SplitReads-Core Algorithm (v1.1.0)
+# SplitReads-Core Algorithm
 
 This document describes the built-in SplitReads-Core module for split-read based eccDNA inference.
 
@@ -12,7 +12,7 @@ SplitReads-Core is an eccDNA detection module based on split-read alignment patt
 
 **Key Features**:
 - Optimized for HiFi data (uses `map-hifi` preset)
-- No external tool dependencies (uses Python's mappy for alignment)
+- The built-in caller invokes the external `minimap2` executable and parses PAF alignments.
 - Graph-based circular detection algorithm
 - Supports both simple (single-segment) and chimeric (multi-segment) eccDNA detection
 
@@ -234,7 +234,7 @@ num_region >= 2  →  Chimeric (ICeccDNA)
 
 ## 7. Dependencies
 
-- **mappy**: Python minimap2 bindings
+- **minimap2** supplies the alignment executable used in the trim phase.
 - **networkx**: Graph algorithm library
 - **pybedtools**: BED file operations (requires system bedtools)
 - **intervaltree**: Interval tree operations
