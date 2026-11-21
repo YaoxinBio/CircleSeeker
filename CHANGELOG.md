@@ -5,7 +5,11 @@ All notable changes to CircleSeeker will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.1] - Unreleased
+## [Unreleased]
+
+- Fixed two pandas 3 compatibility issues. Merging overlapping Confirmed and Inferred calls now preserves fractional copy numbers. UeccDNA clustering retains records with missing coordinates and uses their historical location signatures.
+
+## [1.6.1] - 2026-09-12
 
 1.6.0 is skipped. It was tagged and released briefly, then withdrawn within
 hours over a licensing question, before it reached Bioconda or any user. GitHub

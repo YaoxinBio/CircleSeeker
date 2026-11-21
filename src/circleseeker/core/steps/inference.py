@@ -242,8 +242,7 @@ def minimap2(pipeline: Pipeline, *, force_alignment: bool = False) -> None:
     reference_mmi = pipeline._ensure_reference_mmi()
     pipeline._set_result(ResultKeys.REFERENCE_MMI, str(reference_mmi))
 
-    # SplitReads-Core is built-in and doesn't need BAM alignment
-    # It uses mappy directly for alignment
+    # SplitReads-Core consumes PAF alignments from the minimap2 executable.
     if not force_alignment:
         pipeline.logger.info("SplitReads-Core selected; skipping minimap2 alignment (BAM not required)")
         return

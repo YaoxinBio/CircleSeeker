@@ -409,15 +409,21 @@ class UeccProcessor(BaseEccProcessor):
             df["cluster_size"] = 1
             return df
 
-        # Generate signature for each row (UeccDNA has one row per query_id).
-        # An axis=1 apply builds a Series per row; str concatenation formats the
-        # same values - f"{v}" and astype(str) agree on ints, floats and NaN.
+        def signature_part(column: pd.Series) -> pd.Series:
+            text = column.astype(str)
+            # pandas 3 preserves nulls in astype(str). Keep the original spelling
+            # of each missing scalar so groupby retains its coordinate signature.
+            missing = text.isna()
+            if missing.any():
+                text.loc[missing] = [str(value) for value in column.loc[missing]]
+            return text
+
         df["location_signature"] = (
-            df["chr"].astype(str)
+            signature_part(df["chr"])
             + ":"
-            + df["start0"].astype(str)
+            + signature_part(df["start0"])
             + "-"
-            + df["end0"].astype(str)
+            + signature_part(df["end0"])
         )
 
         # Group by signature

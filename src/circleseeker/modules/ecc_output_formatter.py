@@ -506,7 +506,7 @@ def generate_reads_table(
 def generate_uecc_bed(regions_df: pd.DataFrame, output_path: Path) -> None:
     """Generate uecc.bed file.
 
-    Format: chr, start, end, name, score (read_count), strand
+    Format: chr, start, end, name, score (fixed at 1), strand
     """
     uecc_regions = regions_df[regions_df["role"] == "source"].copy()
 

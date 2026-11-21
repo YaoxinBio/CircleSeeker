@@ -351,7 +351,7 @@ class SplitReadsConfig(ToolConfigMixin):
     """SplitReads-Core configuration.
 
     This is the built-in split-reads based eccDNA detection module.
-    It uses mappy for alignment and networkx for circular structure detection.
+    It invokes minimap2 for alignment and uses networkx for circular structure detection.
     """
 
     # Trim phase parameters
