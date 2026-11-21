@@ -2,9 +2,9 @@ cff-version: 1.2.0
 message: "Please cite the MMC-seq article and the exact CircleSeeker version used in your research."
 type: software
 title: CircleSeeker
-version: 1.6.1
-date-released: "2026-09-12"
-doi: "10.5281/zenodo.22718199"
+version: 1.6.2
+date-released: "2026-11-21"
+doi: "10.5281/zenodo.22718007"
 authors:
   - family-names: Zhang
     given-names: Yaoxin

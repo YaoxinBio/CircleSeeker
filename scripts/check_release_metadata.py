@@ -92,7 +92,7 @@ def main() -> None:
                 if isinstance(node, ast.Assign)
                 and any(isinstance(target, ast.Name) and target.id == "__version__"
                         for target in node.targets)]
-    if versions != ["1.6.1"]:
+    if versions != ["1.6.2"]:
         raise SystemExit("Unexpected release version")
     version = versions[0]
     for filename, pattern in [
